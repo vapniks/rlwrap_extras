@@ -1,0 +1,359 @@
+#! /usr/bin/perl
+
+# Modified version of simple_macro & pipeto rlwrap filters: https://github.com/hanslub42/rlwrap/blob/master/filters/
+# combined so that you can create macros or commands from piped output (e.g. for selecting sqlite columns using fzf),
+# For full documentation run: rlwrap -z pipeto_macro
+
+# Licensed under GPL 2.0 (see COPYING file).
+
+use lib ($ENV{RLWRAP_FILTERDIR} or ".");
+use RlwrapFilter;
+use POSIX qw(:signal_h ceil);
+use strict;
+use IPC::Open2;
+use Expect;
+
+# We want any piped pager to receive SIGWINCH.
+# SIGWINCH is not in POSIX, which means that POSIX.pm doesn't
+# know about it. We use 'kill -l' to find it.
+my @signals = split /\s+/, `kill -l`; # yuck!
+for (my $signo = 1; $signals[$signo-1]; $signo++) {
+  if ($signals[$signo-1] eq 'WINCH') {
+    my $sigset_unblock = POSIX::SigSet->new($signo);
+    unless (defined sigprocmask(SIG_UNBLOCK, $sigset_unblock)) {
+      die "Could not unblock signals: $!\n";
+    }
+  }
+}
+
+my $filter = new RlwrapFilter;
+my $name = $filter -> name;
+my $fzf = "fzf";
+my($pipeline,$pipesink,$prompt); 
+my $out_chunkno = 0;
+my $wait_text = "wait ...";
+
+my $comm;
+# Try to get the correct command name
+if ($ENV{RLWRAP_COMMAND_PID}) {
+  open IN, "/proc/$ENV{RLWRAP_COMMAND_PID}/cmdline" or die "Cannot read /proc/$ENV{RLWRAP_COMMAND_PID}/cmdline: $!\n";
+  $comm = <IN>;
+  close IN;
+  $comm =~ m"^(?:/\S*/)?([^/\s\0]+)";
+  $comm = $1;
+} else {
+  $filter -> command_line =~ m/(\w+).*/;
+  $comm = $1;
+}
+
+# sqlite3 acts strangely without this fix:
+my $nl = ($comm =~ /sqlite3/) ? "\r" : "\n";
+
+my(%expansions, $last_raw_input);
+# Macros will be saved in the last file given in the args, or the default file if there are no args.
+# Store files in reverse priority order (highest priority first).
+my @macro_files = (($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/${comm}_macros");
+my $saved_macros = $macro_files[-1];
+$expansions{$saved_macros} = {};
+read_macros($saved_macros);
+foreach (@ARGV) {
+  my $file = $_ =~ m"/" ? $_ : ($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/$_";
+  $expansions{$file} = {};
+  read_macros($file);
+  unshift(@macro_files,$file);
+  $saved_macros = $file;
+}
+
+$SIG{__DIE__} = \&save_macros;
+
+$filter -> prompts_are_never_empty(1);
+$filter -> help_text(help());
+$filter -> input_handler(\&expand_and_record_macros); # expand macros in input
+$filter -> output_handler(\&output);
+$filter -> prompt_handler(\&prompt);
+#$filter -> echo_handler(sub {$last_raw_input});   # but echo the raw (un-expanded) input
+my $debug = 0; # set to 1 to print debug messages, 0 otherwise
+$filter -> cloak_and_dagger_verbose($debug);
+$filter -> completion_handler(\&complete_macro);
+$filter -> run;
+
+# Print debug info: 1st arg is first string to print,
+# 2nd arg indicates whether or not to print current value of global $pipeline variable,
+# 3rd arg indicates whether or not to print current value of global $pipesink variable,
+# following args are strings to print after $pipesink (one per line)
+sub debug_info {
+  if ($debug) {
+    $filter->send_output_oob(shift(@_) . "${nl}\n");
+    $filter->send_output_oob("pipeline: " . $pipeline . "${nl}\n") if shift(@_);
+    $filter->send_output_oob("pipesink: " . $pipesink . "${nl}\n") if shift(@_);
+    for (@_) {
+      $filter->send_output_oob($_ . "${nl}\n");
+    }
+  }
+}
+
+# expand and/or record macros, and also extract pipeline parts from input
+# the shell pipeline part to be processed is stored in $pipeline (a global variable)
+# the macro name or REPL command to be processed following |> or |>> is stored in $pipesink (a global variable)
+sub expand_and_record_macros {
+  my ($unexpanded) = @_;
+  my $expanded = $last_raw_input = $unexpanded;
+  my $input;
+  if ($expanded =~ s/^\s*\$(?'em'\w+)(\(\((?'ev'.*)\)\)\s*$)\s*$/findmacro($+{em},$+{ev})/ge) {
+    undef $pipeline;
+    undef $pipesink;
+  } else {
+    $expanded =~ /^(?'i'[^|]*)(\|(?!>)(?'pl'([^\|]|\|(?!>))*))?(?'ps'\|>>?.*)?/;
+    ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
+    $input =~ s/\$(?'im'\w+)(?'id'\(\((?'iv'.*)\)\)\s*$)?/findmacro($+{im},$+{iv})/ge if $input;
+    # TODO: also return input if macro definition is embedded within command? (need extra regexs either side)
+    if ($input && ! $+{id}) {
+      return $input;
+    }
+  }
+  return '';
+}
+
+sub output {
+  # Replace first chunk by $wait_text
+  return $pipeline ? ($out_chunkno++ == 0 ? $wait_text : "")  : $_;
+}
+
+sub prompt {
+  my ($prompt) = @_;
+  $out_chunkno = 0;
+  if ($pipeline) {
+    process_pipeline($filter->cumulative_output,$prompt,1);
+  }
+  return $prompt;
+}
+
+# Handle command output; either print it or process pipeline recursively.
+# $filter = RlwrapFilter object, $nl = newline char(s), $prompt = REPL prompt,
+# $depth = current depth of recursion
+sub process_pipeline {
+  my ($output,$prompt,$depth) = @_;
+  if ($pipeline) {
+    if ($depth < 2) {
+      # Erase $wait_text and go to new line
+      $filter->send_output_oob ("\x08" x length($wait_text). "\n");      
+    }
+    local $SIG{PIPE} = 'IGNORE'; # we don't want to die if the pipeline quits
+    if ($pipesink) {
+      # process the shell pipeline and store results in @output2
+      my $pid = open2(\*READER, \*WRITER, $pipeline);
+      print WRITER $output;
+      close WRITER;
+      my @output2;
+      while (<READER>) {
+	$_ =~ s/(^\s*|\s*$)//g;
+	push @output2, $_;
+      }
+      close READER;
+      debug_info("A: depth = ${depth}",1,1,"output2: ",@output2);
+      $pipesink =~ /^\s*(\|>>?)\s*(.*)$/;
+      if (length($1) > 2) {
+	my $cmd = $2;
+	my $d = '%' x $depth;
+	$cmd =~ s/(?<![%0-9])${d}0?${d}(?![%0-9])/@output2/g;
+	foreach (keys @output2) {
+	  my $x = $_ + 1;
+	  $cmd =~ s/(?<!%)${d}${x}${d}(?!%)/$output2[$_]/g;
+	}
+	# remove any remaining placeholders at this depth
+	$cmd =~ s/(?<!%)${d}[0-9]+${d}(?!%)//g;
+	# expand macros, extract any further pipelines (into $pipeline & $pipesink), and run the next command
+	my $newcmd = expand_and_record_macros($cmd);
+	debug_info("B: depth = ${depth}${nl}\nnewcmd= ${newcmd}",1,1);
+	my $pipecmd = cloak_and_dagger2($newcmd,$prompt,0.5);
+	# recurse on output
+	process_pipeline($pipecmd,$prompt,$depth+1);
+      } elsif ( $2 =~ /^\s*(\w+)\s*$/) {
+	findmacro($1,"@output2");
+      } else {
+	print STDERR "Invalid pipeline!\n";
+      }
+    } else {
+      open PIPELINE, "| $pipeline";
+      debug_info("C: depth = $depth",1,0,"output = ${output}");
+      print PIPELINE $output;
+      close PIPELINE; # this waits until pipeline has finished
+    }
+  } else {
+    $filter->send_output_oob($output);
+  }
+  undef $pipeline;
+  undef $pipesink;
+  $filter->send_output_oob($nl); # start prompt on new line  
+}
+
+# Substitute for $filter->cloak_and_dagger, which works with sqlite3
+# $filter = RLwrapFilter object, $nl = newline char(s), $question = command to send to underlying REPL
+# $prompt = prompt string to wait for, $timeout = max amount of time to wait in seconds 
+sub cloak_and_dagger2 {
+  my ($question, $prompt, $timeout) = @_;
+  $prompt ||= $filter -> last('prompt');
+  open(CMD_IN_OUT, "+<&" . $ENV{RLWRAP_MASTER_PTY_FD}) or die "Can't dup rlwrap file descriptor: $!";
+  my $exp = Expect->exp_init(\*CMD_IN_OUT);
+  #$exp->debug(2);
+  $exp->send("$question$nl");
+  debug_info("cloak_and_dagger2 question: $question");
+  my ($pos,$err,$match,$before,$after) = $exp->expect(ceil($timeout),'-re',$prompt);
+  debug_info("cloak_and_dagger2 error: $err");
+  debug_info("cloak_and_dagger2 response: $before");
+  debug_info("cloak_and_dagger2 after: $after");
+  return $before;
+}
+
+sub findmacro {
+  my($macro,$expansion) = @_;
+  if ($expansion) {
+    if ($expansion eq " ") {
+      delete ${$expansions{$macro_files[0]}}{$macro};
+    } else {
+      return ${$expansions{$macro_files[0]}}{$macro} = $expansion;      
+    }
+  } else {
+    foreach (@macro_files) {
+      my $val = ${$expansions{$_}}{$macro};
+      return $val if $val;
+    }
+  }
+  return "";
+}
+
+sub safe_backtick {
+    my @command_line = @_;
+    my $command_line = join ' ', @command_line;
+    open my $pipefh, '-|' or exec @command_line or die "$command_line failed: $!\n";
+    my $result;
+    { local $/;               # slurp all output in one go
+      $result = <$pipefh>; 
+      close $pipefh;
+    }
+    chomp $result;            # chop off last newline
+    return $result
+}
+
+sub complete_macro {
+  my($line, $prefix, @completions) = @_;
+  #print STDERR "prefix <$prefix>\n";
+  if ($prefix =~ /^\$(\w*)$/) {
+    my $query = length($1) > 0 ? "--query '^$1'" : "";
+    my @items;
+    my %seen;
+    foreach (@macro_files) {
+      my $file = $_;
+      foreach (keys %{$expansions{$file}}) {
+	if (!$seen{$_}) {
+	  push(@items,$_ . " " . ${$expansions{$file}}{$_});
+	  $seen{$_} = 1;
+	}
+      }
+    }
+    # Need to make fzf full screen otherwise prompt disappears when it returns
+    my $pid = open2(\*READER, \*WRITER, "$fzf -1 +m $query --height=100%|cut -d' ' -f2-");
+    local $\ = "\n";
+    foreach (@items) { print WRITER $_; }
+    close WRITER;
+    my $expansion = <READER>;
+    close READER;
+    chomp($expansion);
+    unshift @completions, $expansion if $expansion;
+  }
+  return @completions;
+}
+
+sub read_macros {
+  return unless @_;
+  my ($file) = @_;
+  if (-f $file) {
+    -w $file or die "$saved_macros exists but is not writable!\n";
+    open MACROS, $file or die  "$saved_macros exists but is not readable!\n";
+    while(<MACROS>) {
+      chomp;
+      my($macro, $expansion) = /(\S+)\s+(.*)/;
+      $expansions{$file} -> {$macro} = $expansion;
+    }
+    close MACROS;
+  }
+}
+
+sub save_macros {
+  return unless $saved_macros;
+  open MACROS, ">$saved_macros" or die "cannot write to $saved_macros: $!\n"; # ths error may be lost
+  foreach my $macro (sort keys %{$expansions{$saved_macros}}) {
+    print MACROS "$macro ${$expansions{$saved_macros}}{$macro}\n";
+  }
+  close MACROS;
+}
+
+sub help {
+  return <<EOF;
+Usage: rlwrap -z '$name' <COMMAND>
+or:    rlwrap -z '$name <FILE>...' <COMMAND>
+
+On-the-fly macro processing & piping output through pagers or other shell commands.
+
+type \$macro to use a macro
+type \$macro<TAB> to expand it right now ('\$' should not be word-breaking, so you may need to call rlwrap with -b '')
+type \$<TAB> to select a macro using fzf
+enter \$macro((ex pan sion)) to (re-)define \$macro,
+\$macro((ex pan sion)). to (re-)define and use immediately
+\$macro(( )) to delete \$macro (there must be 1 space between the opening & closing parentheses)
+
+macros are kept between sessions in \$RLWRAP_HOME/<COMMAND>_macros if no <FILE> argument
+is supplied, or the last <FILE> argument if there are any.
+The file arguments are processed in order, and macros in later files get priority over
+those in earlier files. If a file argument contains a / char then it is assumed to be a full
+path to the file, otherwise the file is assumed to be in \$RLWRAP_HOME or /usr/share/rlwrap
+if \$RLWRAP_HOME is unset.
+Only the macros in the last <FILE> (or \$RLWRAP_HOME/<COMMAND>) may be altered or deleted.
+
+When input of the form "<CMD> | <SHELL PIPELINE>" is seen, <CMD> is interpreted by <COMMAND>, 
+and its output is piped to <SHELL PIPELINE> instead of being displayed by rlwrap. 
+E.g. to browse sqlite3 table names with less: 
+
+sqlite> .tables|less
+
+If you want to call a shell function without piping anything to it, just omit the <CMD>, e.g:
+
+sqlite> |ls
+
+In addition to the shell pipe, two extra piping operators are available: |> and |>>
+They only may be used after a shell pipeline. 
+The first operator (|>) stores the shell output from the left side into the macro 
+name on the right side. 
+E.g. to use fzf to select column names of a sqlite table, and store them in \$cols:
+
+sqlite> SELECT * FROM <TBL> LIMIT 1; | head -1 | sed 's/\s\+/\\n/g' | fzf |> cols
+
+(note: you could store this whole pipeline in another macro).
+
+The second operator (|>>) pipes the shell output on the left into placeholders 
+in the form \%N\% on the right, and then sends the results to <COMMAND> to be interpreted.
+\%N\% will be replaced by the Nth line from the shell output, and \%\% or \%0\% will be
+replaced by the entire output. E.g. to use fzf to select a sqlite3 command, and then print
+the help notes for that command:
+
+sqlite> .help | fzf | awk '{print $1}' |>> .help %%
+
+The right-hand side of |>> may contain further piping operators, e.g:
+
+sqlite> .help | fzf | awk '{print $1}' |>> .help %% | less
+
+In fact, the | & |>> operators can be used to sequence together a pipeline which alternates
+between REPL commands and shell pipelines. The Nth output from the Mth |>> operator is referenced 
+by using M %'s either side of the number N, e.g. %%%2%%% for the 2nd line of output from the 
+3rd |>> operator.
+
+The following sqlite3 example uses fzf to select a table and columns, and paste them into a SELECT statement:
+
+sqlite> .tables|fzf |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\1/g' -e 's/,\s*/\r\n/g'|fzf|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
+
+OpenSSL> help|sed -n -e '/^[a-z]/ {s/\s\+/\n/g;p}'|grep -v '^\s*$'|fzf --preview="openssl help {}"|>> help %% 
+
+
+
+EOF
+}
