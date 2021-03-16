@@ -1,10 +1,9 @@
 * About
 Some filters for [[https://github.com/hanslub42/rlwrap][rlwrap]].
 * Usage
-Use rlwrap's -z option to invoke a filter: =rlwrap -z "<FILTER>" <OTHER_OPTS> <CMD>=\\
-If you want to use several filters, you can use the =pipeline= filter that comes with rlwrap,\\
-like this:
-  =rlwrap -z "pipeline <FILTER1>:<FILTER2>:..."=\\
+Use rlwrap's -z option to invoke a filter: =rlwrap -z "<FILTER>" <OTHER_OPTS> <CMD>=
+If you want to use several filters, you can use the =pipeline= filter that comes with rlwrap,
+like this: =rlwrap -z "pipeline <FILTER1>:<FILTER2>:..."=
 
 Documentation for a particular filter can be viewed with: =rlwrap -z <FILTER>=
 * Filters
