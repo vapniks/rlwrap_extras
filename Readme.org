@@ -1,0 +1,16 @@
+* About
+Some filters for [[https://github.com/hanslub42/rlwrap][rlwrap]].
+* Usage
+Use rlwrap's -z option to invoke a filter: =rlwrap -z "<FILTER>" <OTHER_OPTS> <CMD>= \\
+If you want to use several filters, you can use the =pipeline= filter that comes with rlwrap, like this:\\
+=rlwrap -z "pipeline <FILTER1>:<FILTER2>:..."= \\
+
+Documentation for a particular filter can be viewed with: =rlwrap -z <FILTER>=
+* Filters
+ - *pipeto_macro* pipe output of REPL commands into shell commands, and back again, or into save output into macros.
+   Complete macros using [[https://github.com/junegunn/fzf][fzf]].
+ - *handle_hotkeys_fzf* like the [[https://github.com/hanslub42/rlwrap/blob/master/filters/handle_hotkeys][handle_hotkeys]] filter that comes with rlwrap, but uses fzf, and has a few extra
+   keybindings, such as *show_keys* (show keybindings) & *fzf_complete_history_word*
+
+
+
