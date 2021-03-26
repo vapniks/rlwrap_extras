@@ -32,6 +32,11 @@ my $fzf = "fzf";
 my($pipeline,$pipesink,$prompt); 
 my $out_chunkno = 0;
 my $wait_text = "wait ...";
+# Below is the argument separator for parameterised macros.
+# It should be a string that is unlikely to occur in any REPL
+my $argsep = ":::";
+# The char used to indicate a macro name (it should be single quoted).
+my $macrochar = '\$';
 
 my $comm;
 # Try to get the correct command name
@@ -99,14 +104,15 @@ sub expand_and_record_macros {
   my ($unexpanded) = @_;
   my $expanded = $last_raw_input = $unexpanded;
   my $input;
-  if ($expanded =~ s/^\s*\$(?'em'\w+)(\(\((?'ev'.*)\)\)\s*$)\s*$/findmacro($+{em},$+{ev})/ge) {
+  # Macro definitions must be checked by a separate regexp so that included pipelines don't get mistaken
+  # for pipelines following a macro
+  if ($expanded =~ s/^\s*${macrochar}(?'em'\w+(\[\[.*?\]\])?)(\(\((?'ev'.*)\)\)\s*$)\s*$/findmacro($+{em},$+{ev})/ge) {
     undef $pipeline;
     undef $pipesink;
   } else {
     $expanded =~ /^(?'i'[^|]*)(\|(?!>)(?'pl'([^\|]|\|(?!>))*))?(?'ps'\|>>?.*)?/;
     ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
-    $input =~ s/\$(?'im'\w+)(?'id'\(\((?'iv'.*)\)\)\s*$)?/findmacro($+{im},$+{iv})/ge if $input;
-    # TODO: also return input if macro definition is embedded within command? (need extra regexs either side)
+    $input =~ s/${macrochar}(?'im'\w+(\[\[.*?\]\])?)(?'id'\(\((?'iv'.*)\)\)\s*$)?/findmacro($+{im},$+{iv})/ge if $input;
     if ($input && ! $+{id}) {
       return $input;
     }
@@ -168,7 +174,7 @@ sub process_pipeline {
 	my $pipecmd = cloak_and_dagger2($newcmd,$prompt,0.5);
 	# recurse on output
 	process_pipeline($pipecmd,$prompt,$depth+1);
-      } elsif ( $2 =~ /^\s*(\w+)\s*$/) {
+      } elsif ($2 =~ /^\s*(\w+)\s*$/) {
 	findmacro($1,"@output2");
       } else {
 	print STDERR "Invalid pipeline!\n";
@@ -207,16 +213,35 @@ sub cloak_and_dagger2 {
 
 sub findmacro {
   my($macro,$expansion) = @_;
+  my $args;
+  $macro =~ /(?'m'\w+)(\[\[(?'a'.*?)\]\])?/;
+  ($macro, $args) = ($+{m}, $+{a});
+  debug_info("findmacro \$macro: $macro\n\$args: $args\n\$expansion: $expansion");
   if ($expansion) {
     if ($expansion eq " ") {
       delete ${$expansions{$macro_files[0]}}{$macro};
     } else {
-      return ${$expansions{$macro_files[0]}}{$macro} = $expansion;      
+      return ${$expansions{$macro_files[0]}}{$macro} = $expansion;
     }
   } else {
     foreach (@macro_files) {
       my $val = ${$expansions{$_}}{$macro};
-      return $val if $val;
+      if ($val) {
+	if ($args) {
+	  my $i = 1;
+	  foreach (split(/${argsep}/,$args)) {
+	    $val =~ s/${macrochar}${i}/$_/g;
+	    $i += 1;
+	  }
+	}
+	# if $val begins with |< then run the shell pipeline to get the expansion
+	debug_info("findmacro \$val: $val");
+	if ($val =~ /^\s*\|<(.*)/) {
+	  $val = `$1`;
+	  $val =~ s/\n//g;
+	}
+	return $val;
+      }
     }
   }
   return "";
@@ -237,8 +262,8 @@ sub safe_backtick {
 
 sub complete_macro {
   my($line, $prefix, @completions) = @_;
-  #print STDERR "prefix <$prefix>\n";
-  if ($prefix =~ /^\$(\w*)$/) {
+  debug_info("complete_macro prefix: $prefix");
+  if ($prefix =~ /^${macrochar}(\w*)$/) {
     my $query = length($1) > 0 ? "--query '^$1'" : "";
     my @items;
     my %seen;
@@ -259,6 +284,14 @@ sub complete_macro {
     my $expansion = <READER>;
     close READER;
     chomp($expansion);
+    # if $expansion begins with |< then run the shell pipeline to get the completion
+    if ($expansion =~ /^\s*\|<(.*)/) {
+      $expansion = `$1`;
+      $expansion =~ s/\n//g;
+    }
+    unshift @completions, $expansion if $expansion;
+  } elsif ($prefix =~ /^${macrochar}(\w*\[\[.*?\]\])$/) {
+    my $expansion = findmacro($1);
     unshift @completions, $expansion if $expansion;
   }
   return @completions;
@@ -281,7 +314,7 @@ sub read_macros {
 
 sub save_macros {
   return unless $saved_macros;
-  open MACROS, ">$saved_macros" or die "cannot write to $saved_macros: $!\n"; # ths error may be lost
+  open MACROS, ">$saved_macros" or die "cannot write to $saved_macros: $!\n"; # this error may be lost
   foreach my $macro (sort keys %{$expansions{$saved_macros}}) {
     print MACROS "$macro ${$expansions{$saved_macros}}{$macro}\n";
   }
@@ -315,6 +348,10 @@ and its output is piped to <SHELL PIPELINE> instead of being displayed by rlwrap
 E.g. to browse sqlite3 table names with less: 
 
 sqlite> .tables|less
+
+or export them to a file:
+
+sqlite> .tables|cat > tables.txt
 
 If you want to call a shell function without piping anything to it, just omit the <CMD>, e.g:
 
@@ -351,8 +388,10 @@ The following sqlite3 example uses fzf to select a table and columns, and paste 
 
 sqlite> .tables|fzf |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\1/g' -e 's/,\s*/\r\n/g'|fzf|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
 
-OpenSSL> help|sed -n -e '/^[a-z]/ {s/\s\+/\n/g;p}'|grep -v '^\s*$'|fzf --preview="openssl help {}"|>> help %% 
-
+Notes: 
+ - You may need to redirect STDOUT to STDERR to get some shell commands such as "less" to work in pipelines that 
+   pipe their output to a REPL command.
+ - If you use fzf in a pipeline set "--height=100%" in the options to avoid messing up the prompt when it returns.
 
 
 EOF
