@@ -54,14 +54,14 @@ if ($ENV{RLWRAP_COMMAND_PID}) {
   $filter -> command_line =~ m/(\w+).*/;
   $comm = $1;
 }
+#print STDERR "\$comm = \"$comm\"\n";
 # newline char (sqlite3 acts strangely without this fix):
 my $nl = ($comm =~ /sqlite3/) ? "\r\n" : "\n";
-
 
 my(%expansions, $last_raw_input);
 # Macros will be saved in the last file given in the args, or the default file if there are no args.
 # Store files in reverse priority order (highest priority first).
-my @macro_files = (($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/${comm}_macros");
+my @macro_files = ($comm && (length($comm) > 0)) ? (($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/${comm}_macros") : ();
 my $saved_macros = $macro_files[-1];
 $expansions{$saved_macros} = {};
 read_macros($saved_macros);
@@ -73,7 +73,11 @@ foreach (@ARGV) {
   $saved_macros = $file;
 }
 
-$SIG{__DIE__} = \&save_macros;
+# This assignment needs to be wrapped in this "if" statement in order that "rlwrap -z listing"
+# works with pipeto_macros
+if ($saved_macros) {
+  $SIG{__DIE__} = \&save_macros;
+}
 
 $filter -> prompts_are_never_empty(1);
 $filter -> help_text(help());
@@ -372,19 +376,26 @@ sub save_macros {
 
 sub help {
   return <<EOF;
-Usage: rlwrap -z '$name' <COMMAND>
-or:    rlwrap -z '$name <FILE>...' <COMMAND>
+Usage: rlwrap -z '$name [<FILE>...]' <COMMAND>
+Parameterised macro processing, and pipelines for building REPL commands or macros from shell output.
+NOTE: you may need to call rlwrap with -b '' to prevent '\$' being interpreted as a word break.
 
-On-the-fly macro processing & piping output through pagers or other shell commands.
+MACROS
 
-type \$macro to use a macro
-type \$macro<TAB> to expand it right now ('\$' should not be word-breaking, so you may need to call rlwrap with -b '')
-type \$<TAB> to select a macro using fzf
-enter \$macro((ex pan sion)) to (re-)define \$macro,
-\$macro((ex pan sion)). to (re-)define and use immediately
-\$macro(( )) to delete \$macro (there must be 1 space between the opening & closing parentheses)
+Syntax:
+ \$foo       : Use a macro - \$foo will be replaced by its definition when command is entered.
+ \$foo<TAB>  : Expand it right now - \$foo will be replaced by its definition immediately.
+ \$f<TAB>    : Select a macro using fzf - selection will be limited to macros whose names start with f.
+ \$foo((ex pan sion))<ENTER> 
+            : (re-)define \$foo to "ex pan sion".
+ \$foo(( ))<ENTER> 
+            : Delete \$foo (there must be 1 space between the opening & closing parentheses).
+ \$<foo<TAB> : Expand & evaluate \$foo, and immediately place results on command line.
+              If you use this kind of macro normally without TAB completion then it will be 
+              expanded & evaluated when the entire command line is entered, but before the line
+              is send to the REPL interpreter. See below for some examples.
 
-macros are kept between sessions in \$RLWRAP_HOME/<COMMAND>_macros if no <FILE> argument
+Macros are kept between sessions in \$RLWRAP_HOME/<COMMAND>_macros if no <FILE> argument
 is supplied, or the last <FILE> argument if there are any.
 The file arguments are processed in order, and macros in later files get priority over
 those in earlier files. If a file argument contains a / char then it is assumed to be a full
@@ -392,56 +403,49 @@ path to the file, otherwise the file is assumed to be in \$RLWRAP_HOME or /usr/s
 if \$RLWRAP_HOME is unset.
 Only the macros in the last <FILE> (or \$RLWRAP_HOME/<COMMAND>) may be altered or deleted.
 
-When input of the form "<CMD> | <SHELL PIPELINE>" is seen, <CMD> is interpreted by <COMMAND>, 
-and its output is piped to <SHELL PIPELINE> instead of being displayed by rlwrap. 
-E.g. to browse sqlite3 table names with less: 
+PIPELINES
 
-sqlite> .tables|less
+Syntax:
+  <REPL CMD> | <SHELL CMD>     : Pipe output from REPL command into STDIN of shell command.
+ <SHELL CMD> |> \$foo           : Save output from shell command into macro \$foo.
+ <SHELL CMD> |>> <REPL CMD> %% : Insert output from shell command into position marked by %%,
+                                 and then execute REPL command. To insert the Nth line of
+                                 output use \%N% (e.g. to insert 5th & 6th lines: <CMD> %5% %6%).
 
-or export them to a file:
+The | & |>> pipeline operators can be chained together to form alternating sequences of REPL & shell commands.
+In this case the Nth output from the Mth |>> operator is referenced by using M %'s either side of the number N, 
+e.g. %%%2%%% for the 2nd line of output from the 3rd |>> operator. If N is 0, or there is no number between
+the %'s, then the entire output is inserted.
+You can use output from previous |>> operators after the most recent one, e.g. in this example <CMD3> is called 
+with the 5th line of output from <SHELL CMD1>, and the 1st line of output from <SHELL CMD2>:
 
-sqlite> .tables|cat > tables.txt
+  <CMD1> | <SHELL CMD1> |>> <CMD2> | <SHELL CMD2> |>> <CMD3> %5% %%1%%
 
-If you want to call a shell function without piping anything to it, just omit the <CMD>, e.g:
+You can use pipeline operators in macros, however when a pipeline is processed macro expansion will only occur
+in the sections containing REPL commands, not the sections containing shell commands. This is so that \$'s can
+be used for other purposes by shell commands, e.g. awk variables.
 
-sqlite> |ls
+EXAMPLES
 
-In addition to the shell pipe, two extra piping operators are available: |> and |>>
-They only may be used after a shell pipeline. 
-The first operator (|>) stores the shell output from the left side into the macro 
-name on the right side. 
-E.g. to use fzf to select column names of a sqlite table, and store them in \$cols:
+Browse sqlite3 table names with less:               sqlite> .tables|less
+Export them to a file:                              sqlite> .tables|cat > tables.txt
+View contents of the current directory:             sqlite> |ls
+Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf))
+Build a SELECT statement using the macro:           sqlite> SELECT * FROM \$<choosetbl;
+Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print $1}' |>> .help %% | less
 
-sqlite> SELECT * FROM <TBL> LIMIT 1; | head -1 | sed 's/\s\+/\\n/g' | fzf |> cols
+Here's a more complex example (split over 2 lines) involving pipeline operators. fzf is used to first choose a table, 
+and then select some columns from that table. Finally these strings are used to build a SELECT statement which is 
+passed to the REPL:
 
-(note: you could store this whole pipeline in another macro).
+sqlite> .tables|fzf |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
+ |fzf|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
 
-The second operator (|>>) pipes the shell output on the left into placeholders 
-in the form \%N\% on the right, and then sends the results to <COMMAND> to be interpreted.
-\%N\% will be replaced by the Nth line from the shell output, and \%\% or \%0\% will be
-replaced by the entire output. E.g. to use fzf to select a sqlite3 command, and then print
-the help notes for that command:
-
-sqlite> .help | fzf | awk '{print $1}' |>> .help %%
-
-The right-hand side of |>> may contain further piping operators, e.g:
-
-sqlite> .help | fzf | awk '{print $1}' |>> .help %% | less
-
-In fact, the | & |>> operators can be used to sequence together a pipeline which alternates
-between REPL commands and shell pipelines. The Nth output from the Mth |>> operator is referenced 
-by using M %'s either side of the number N, e.g. %%%2%%% for the 2nd line of output from the 
-3rd |>> operator.
-
-The following sqlite3 example uses fzf to select a table and columns, and paste them into a SELECT statement:
-
-sqlite> .tables|fzf |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\1/g' -e 's/,\s*/\r\n/g'|fzf|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
+(note: you could store this whole pipeline, or part of it, in another macro).
 
 Notes: 
- - You may need to redirect STDOUT to STDERR using ">&2" to get some shell commands such as "less" to work in pipelines 
-   that pipe their output to a REPL command. 
+ - You may need to redirect STDOUT to STDERR using ">&2" to get some shell commands such as "less" to work in 
+   pipelines that pipe their output to a REPL command. 
  - If you use fzf in a pipeline set "--height=100%" in the options to avoid messing up the prompt when it returns.
-
-
 EOF
 }
