@@ -66,11 +66,15 @@ my $saved_macros = $macro_files[-1];
 $expansions{$saved_macros} = {};
 read_macros($saved_macros);
 foreach (@ARGV) {
-  my $file = $_ =~ m"/" ? $_ : ($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/$_";
-  $expansions{$file} = {};
-  read_macros($file);
-  unshift(@macro_files,$file);
-  $saved_macros = $file;
+  if ($_ =~ /^-(.{1,6})/) {
+    $macrochar = ${1};
+  } else {
+    my $file = $_ =~ m"/" ? $_ : ($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/$_";
+    $expansions{$file} = {};
+    read_macros($file);
+    unshift(@macro_files,$file);
+    $saved_macros = $file;
+  }
 }
 
 # This assignment needs to be wrapped in this "if" statement in order that "rlwrap -z listing"
@@ -376,11 +380,15 @@ sub save_macros {
 
 sub help {
   return <<EOF;
-Usage: rlwrap -z '$name [<FILE>...]' <COMMAND>
+Usage: rlwrap -z '$name [-MACROCHAR] [<FILE>...]' <COMMAND>
 Parameterised macro processing, and pipelines for building REPL commands or macros from shell output.
 NOTE: you may need to call rlwrap with -b '' to prevent '\$' being interpreted as a word break.
 
 MACROS
+
+By default the start of a macro name is indicated by \$, and this is used in the documentation below. 
+To use a different char(s), set the MACROCHAR option as indicated in the usage string above (\$'s need 
+to be backslash quoted, e.g: to set MACROCHAR to \$\$ use '-\\\$\\\$').
 
 Syntax:
  \$foo       : Use a macro - \$foo will be replaced by its definition when command is entered.
@@ -430,7 +438,7 @@ EXAMPLES
 Browse sqlite3 table names with less:               sqlite> .tables|less
 Export them to a file:                              sqlite> .tables|cat > tables.txt
 View contents of the current directory:             sqlite> |ls
-Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf))
+Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf --height=100%))
 Build a SELECT statement using the macro:           sqlite> SELECT * FROM \$<choosetbl;
 Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print $1}' |>> .help %% | less
 
@@ -438,10 +446,10 @@ Here's a more complex example (split over 2 lines) involving pipeline operators.
 and then select some columns from that table. Finally these strings are used to build a SELECT statement which is 
 passed to the REPL:
 
-sqlite> .tables|fzf |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
- |fzf|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
+sqlite> $choosetbl |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
+ |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
 
-(note: you could store this whole pipeline, or part of it, in another macro).
+You could store this whole pipeline, or part of it, in another macro.
 
 Notes: 
  - You may need to redirect STDOUT to STDERR using ">&2" to get some shell commands such as "less" to work in 
