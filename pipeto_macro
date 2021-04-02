@@ -92,7 +92,7 @@ $filter -> prompt_handler(\&prompt);
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1);
 #my %debug = ('expand_and_record_macros'=>1,'process_pipeline'=>1,'prompt'=>1);
-my %debug = ();
+my %debug = ('evalmacro'=>1);
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> run;
@@ -440,14 +440,14 @@ Export them to a file:                              sqlite> .tables|cat > tables
 View contents of the current directory:             sqlite> |ls
 Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf --height=100%))
 Build a SELECT statement using the macro:           sqlite> SELECT * FROM \$<choosetbl;
-Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print $1}' |>> .help %% | less
+Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print \$1}' |>> .help %% | less
 
 Here's a more complex example (split over 2 lines) involving pipeline operators. fzf is used to first choose a table, 
 and then select some columns from that table. Finally these strings are used to build a SELECT statement which is 
 passed to the REPL:
 
-sqlite> $choosetbl |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
- |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?$1:x","$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
+sqlite> \$choosetbl |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
+ |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$1:x","\$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
 
 You could store this whole pipeline, or part of it, in another macro.
 
