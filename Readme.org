@@ -14,6 +14,6 @@ Documentation for a particular filter can be viewed with: =rlwrap -z <FILTER>=
    Complete macros using [[https://github.com/junegunn/fzf][fzf]].
  - *handle_hotkeys_fzf* like the [[https://github.com/hanslub42/rlwrap/blob/master/filters/handle_hotkeys][handle_hotkeys]] filter that comes with rlwrap, but uses fzf, and has a few extra
    keybindings, such as *show_keys* (show keybindings) & *fzf_complete_history_word*
-
+ - *uncolour* remove control chars from output text
 
 
