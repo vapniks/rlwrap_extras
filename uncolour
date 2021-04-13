@@ -1,0 +1,29 @@
+#!/usr/bin/env perl
+
+# filter to remove terminal escape sequences such as color changes
+# Based on code found here: https://unix.stackexchange.com/questions/14684/removing-control-chars-including-console-codes-colours-from-script-output
+
+use lib ($ENV{RLWRAP_FILTERDIR} or ".");
+use RlwrapFilter;
+use strict;
+
+my $filter = new RlwrapFilter;
+my $name = $filter -> name;
+
+$filter -> help_text("Usage: rlwrap -z '$name' <COMMAND>\n".
+                     "Removes control chars from output text\n");
+
+$filter -> output_handler(\&scrub);
+$filter -> run;
+
+
+sub scrub {
+  my ($output) = @_;
+  $output =~ s/ \e[ #%()*+\-.\/]. |
+	       \e\[ [ -?]* [@-~] | # CSI ... Cmd
+	       \e\] .*? (?:\e\\|[\a\x9c]) | # OSC ... (ST|BEL)
+	       \e[P^_] .*? (?:\e\\|\x9c) | # (DCS|PM|APC) ... ST
+	       \e. //xg;
+  return $output;
+}
+
