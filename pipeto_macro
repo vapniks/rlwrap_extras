@@ -148,9 +148,8 @@ sub expand_and_record_macros {
     undef $pipesink;
   } else {
     # get the input, pipeline & pipesink
-    $expanded =~ /^\s*(?'i'[^\|]*)(\|(?!>)(?'pl'([^\|]|\|(?!>))*))?(?'ps'\|>>?.*)?\s*$/;
-    $input = $+{i};
-    my ($pl,$ps) = ($+{pl},$+{ps});
+    $expanded =~ /^\s*([^\|]*)(?'rest'.*)$/;
+    $input = ${1};
     # expand macros in $input recursively (but don't remove $leftover_text):
     if ($input =~ /${macrochar}<?\w+/) {
       # need to do substitution first to prevent infinite recursion
@@ -158,17 +157,11 @@ sub expand_and_record_macros {
       my $x = expand_and_record_macros($input,0);
       # after expansion $input may contain its own pipeline & pipesink
       $input = $x . (${pipeline}? " | ${pipeline}" : " ") . (${pipesink} || "");
-    } # expand macros in $ps (the pipesink) recursively (unless its output is directed into a macro):
-    # TODO: remove this? it's not needed since the pipesink will be expanded in process_pipeline when it calls
-    # expand_and_record_macros 
-    if (${ps} && (${ps} =~ /^\|>>(.*${macrochar}<?\w+.*)$/)) {
-      my $x = expand_and_record_macros($1,0);
-      $ps = " |>> ${x} " . (${pipeline}? " | ${pipeline}" : " ") . (${pipesink} || "");
-    }
-    $expanded = $input . (${pl}? " | ${pl}" : " ") . (${ps} || "");
+    } 
+    $expanded = $input . $+{rest};
     # need to split again in case the location of the 1st pipesink changed after expansion:
-    $expanded =~ /^(?'i2'[^\|]*)(\|(?!>)(?'pl2'([^\|]|\|(?!>))*))?(?'ps2'\|>>?.*)?/;
-    ($input, $pipeline, $pipesink) = ($+{i2},$+{pl2},$+{ps2});
+    $expanded =~ /^(?'i'[^\|]*)(\|(?!>)(?'pl'([^\|]|\|(?!>))*))?(?'ps'\|>>?.*)?/;
+    ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
     debug_info('expand_and_record_macros',"input = \"${input}\"${nl}leftover_text = \"${leftover_text}\"",1,1);
   }
   if ($leftover_text && $fix) {
