@@ -29,17 +29,17 @@ for (my $signo = 1; $signals[$signo-1]; $signo++) {
 my $filter = new RlwrapFilter;
 my $name = $filter -> name;
 my $fzf = "fzf";
-my $last_prompt;
-# This is needed to fix problems with sqlite3 
+my($prompt,$last_prompt);
+# This is needed to fix problems with sqlite3 and possibly other REPL's
 my $leftover_text;
 # $pipeline & $pipesink need to be globals because of the way REPL commands are handled
-my($pipeline,$pipesink,$prompt); 
+my($pipeline,$pipesink); 
 my $out_chunkno = 0;
 my $wait_text = "wait ...";
 # Below is the argument separator for parameterised macros.
 # It should be a string that is unlikely to occur in any REPL
 my $argsep = ":::";
-# The char used to indicate a macro name (it should be single quoted).
+# The char used to indicate the start of a macro name (it should be single quoted).
 my $macrochar = '\$';
 # Maximum amount of time to wait for a REPL command to return. TODO: should this be an option?
 my $max_timeout = 0.5;
@@ -57,41 +57,44 @@ if ($ENV{RLWRAP_COMMAND_PID}) {
   $filter -> command_line =~ m/(\w+).*/;
   $comm = $1;
 }
-#print STDERR "\$comm = \"$comm\"\n";
+#print STDERR "\$comm = \"${comm}\"\n";
 # newline char (sqlite3 acts strangely without this fix):
-my $nl = ($comm =~ /sqlite3/) ? "\r\n" : "\n";
+my $nl = ($comm =~ /sqlite3|minetest/) ? "\r\n" : "\n";
 
 my(%expansions, $last_raw_input);
 # Macros will be saved in the last file given in the args, or the default file if there are no args.
 # Store files in reverse priority order (highest priority first).
-my @macro_files = ($comm && (length($comm) > 0)) ? (($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/${comm}_macros") : ();
-my $saved_macros = $macro_files[-1];
-$expansions{$saved_macros} = {};
-read_macros($saved_macros);
-foreach (@ARGV) {
-  if ($_ =~ /^-(.{1,6})/) {
-    $macrochar = ${1};
-  } else {
-    my $file = $_ =~ m"/" ? $_ : ($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/$_";
-    $expansions{$file} = {};
-    read_macros($file);
-    unshift(@macro_files,$file);
-    $saved_macros = $file;
+my @macro_files = ();
+my($saved_macros,$exp);
+# only store macros if we are wrapping a command (rather than printing documentation)
+if ($comm && (length($comm) > 0)) {
+  foreach (@ARGV) {
+    if ($_ =~ /^-(.{1,6})/) {
+      $macrochar = ${1};
+    } else {
+      my $file = $_ =~ m"/" ? $_ : ($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/$_";
+      $expansions{$file} = {};
+      read_macros($file);
+      unshift(@macro_files,$file);
+      $saved_macros = $file;
+    }
   }
-}
-
-
-# If we are wrapping a command and not just printing documentation:
-my $exp;
-if ($saved_macros) {
+  # if no macro files were supplied on the command line use the default macros file
+  if ($#macro_files < 0) {
+    @macro_files = (($ENV{RLWRAP_HOME} || "/usr/share/rlwrap") . "/${comm}_macros");
+    $saved_macros = $macro_files[0];
+    $expansions{$saved_macros} = {};
+    read_macros($saved_macros);
+  }
+  # save macros before quitting
+  $SIG{__DIE__} = \&save_macros;
+  # when wrapping a command this is needed for sending commands behind the scenes
+  # with the cloak_and_dagger2 procedure
   open(CMD_IN_OUT, "+<&" . $ENV{RLWRAP_MASTER_PTY_FD}) or die "Can't dup rlwrap file descriptor: $!";
   $exp = Expect->exp_init(\*CMD_IN_OUT);
-  # This assignment needs to be wrapped in this "if" statement in order that "rlwrap -z listing"
-  # works with pipeto_macros
-  $SIG{__DIE__} = \&save_macros;
 }
 
-$filter -> prompts_are_never_empty(1);
+$filter -> prompts_are_never_empty(1); #TODO: do we need this?
 $filter -> help_text(help());
 $filter -> input_handler(\&expand_and_record_macros); # expand macros in input
 $filter -> output_handler(\&output);
@@ -101,8 +104,8 @@ $filter -> prompt_handler(\&prompt);
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1,'expect2'=>1,'exp_internal'=>1);
 #my %debug = ('expand_and_record_macros'=>1,'process_pipeline'=>1,'prompt'=>1);
-#my %debug = ('cloak_and_dagger2'=>1,'expand_and_record_macros'=>1);
-my %debug = ();
+my %debug = ('process_pipeline'=>1);
+#my %debug = ();
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> run;
@@ -111,6 +114,7 @@ $filter -> run;
 # 2nd arg indicates whether or not to print current value of global $pipeline variable,
 # 3rd arg indicates whether or not to print current value of global $pipesink variable,
 # following args are strings to print after $pipesink (one per line)
+# simple-call-tree-info: DONE
 sub debug_info {
   my $name = shift(@_);
   if ($debug{$name}) {
@@ -123,70 +127,93 @@ sub debug_info {
   }
 }
 
+# input_handler
 # Expand and/or record macros, and also extract pipeline parts from input.
 # The shell pipeline part to be processed is stored in $pipeline (a global variable), and
 # the macro name or REPL command to be processed following |> or |>> is stored in $pipesink (a global variable).
 # The part before any pipelines, and the part after |> or |>> are expanded recursively, whereas shell pipelines
 # are not expanded at all since they may contain words that look like macros but are not (e.g. $'s in awk commands).
-# If the user wants to store a shell pipeline in a macro then the whole pipeline must be stored in the macro, including
-# the initial |
+# If the user wants to store a shell pipeline in a macro then the whole pipeline must be stored in the macro, 
+# including the initial |
+# If a non-zero $fix arg is supplied, then $leftover_text will be removed before returning
+# (this should only be done if the returned text is to be sent directly to the REPL).
+# simple-call-tree-info:   
 sub expand_and_record_macros {
-  my ($unexpanded,$nofix) = @_;
+  my ($unexpanded,$fix) = @_;
   my $expanded = $last_raw_input = $unexpanded;
   my $input = '';
-  # Macro definitions must be checked by a separate regexp so that included pipelines don't get mistaken
-  # for pipelines following a macro
-  if ($expanded =~ s/^\s*${macrochar}(?'em'\w+(\[\[.*?\]\])?)(\(\((?'ev'.*)\)\)\s*$)\s*$/findmacro($+{em},$+{ev})/ge) {
+  # Expand macro definitions first so that included pipelines don't get mistaken for pipelines following a macro.
+  if ($expanded =~ s/^\s*${macrochar}(?'em'\w+(\[\[.*?\]\])?)(\(\((?'ev'.*)\)\))\s*$/findmacro($+{em},$+{ev})/ge) {
     undef $pipeline;
     undef $pipesink;
   } else {
-    $expanded =~ /^(?'i'[^\|]*)(\|(?!>)(?'pl'([^\|]|\|(?!>))*))?(?'ps'\|>>?.*)?/;
+    # get the input, pipeline & pipesink
+    $expanded =~ /^\s*(?'i'[^\|]*)(\|(?!>)(?'pl'([^\|]|\|(?!>))*))?(?'ps'\|>>?.*)?\s*$/;
     $input = $+{i};
     my ($pl,$ps) = ($+{pl},$+{ps});
-    # expand $input & $pipesink (but not $pipeline) recursively:
+    # expand macros in $input recursively (but don't remove $leftover_text):
     if ($input =~ /${macrochar}<?\w+/) {
       # need to do substitution first to prevent infinite recursion
       $input =~ s/${macrochar}(?'im'<?\w+(\[\[.*?\]\])?)/findmacro($+{im})/ge;
-      my $x = expand_and_record_macros($input,1);
+      my $x = expand_and_record_macros($input,0);
+      # after expansion $input may contain its own pipeline & pipesink
       $input = $x . (${pipeline}? " | ${pipeline}" : " ") . (${pipesink} || "");
+    } # expand macros in $ps (the pipesink) recursively (unless its output is directed into a macro):
+    # TODO: remove this? it's not needed since the pipesink will be expanded in process_pipeline when it calls
+    # expand_and_record_macros 
+    if (${ps} && (${ps} =~ /^\|>>(.*${macrochar}<?\w+.*)$/)) {
+      my $x = expand_and_record_macros($1,0);
+      $ps = " |>> ${x} " . (${pipeline}? " | ${pipeline}" : " ") . (${pipesink} || "");
     }
-    if (${ps} && (${ps} =~ /^\|>>(.*)/)) {
-      my $x = expand_and_record_macros($1,1);
-      $ps = " |>> ${x} " . (${pipeline}? " | ${pipeline}" : '') . (${pipesink} || '');
-    }
-    $expanded = $input . (${pl}? " | ${pl}" : '') . (${ps} || '');
+    $expanded = $input . (${pl}? " | ${pl}" : " ") . (${ps} || "");
+    # need to split again in case the location of the 1st pipesink changed after expansion:
     $expanded =~ /^(?'i2'[^\|]*)(\|(?!>)(?'pl2'([^\|]|\|(?!>))*))?(?'ps2'\|>>?.*)?/;
     ($input, $pipeline, $pipesink) = ($+{i2},$+{pl2},$+{ps2});
-    debug_info('expand_and_record_macros',"input: ${input}${nl}leftover_text: \"${leftover_text}\"",1,1);
+    debug_info('expand_and_record_macros',"input = \"${input}\"${nl}leftover_text = \"${leftover_text}\"",1,1);
   }
-  if ($leftover_text && !$nofix) {
+  if ($leftover_text && $fix) {
+    # delete any leftover whitespace from previous command executed by evalmacro or process_pipeline
+    # so that e.g. dot commands work in sqlite3
+    debug_info('expand_and_record_macros',"removing \"${leftover_text}\" from start of input");
     $input = "\x08" x length($leftover_text) . ($input||'');
+    $leftover_text = ""; #TEST
   }
   return $input;
 }
 
+# output_handler
+# simple-call-tree-info: 
 sub output {
-  # Replace first chunk by $wait_text
-  debug_info('output',"\$_: $_\nout_chunkno: $out_chunkno",1,1);
-  return $pipeline ? ($out_chunkno++ == 0 ? $wait_text : "")  : $_;
+  my $output = $_;
+  debug_info('output',"\$output: \"${output}\"${nl}out_chunkno: $out_chunkno",1,1);
+  $output =~ s/\n/${nl}/; # DEBUG  
+  # If there's a pipeline, replace the 1st chunk by $wait_text
+  # (the pipeline output will be printed at the next prompt)
+  return $pipeline ? ($out_chunkno++ == 0 ? $wait_text : "")  : $output;
 }
 
+# prompt_handler: collect output from last REPL command and feed into process_pipeline if necessary
+# (i.e. if $pipeline & $pipesink were found in previous REPL input by expand_and_record_macros)
+# simple-call-tree-info: 
 sub prompt {
   my ($prompt) = @_;
+  debug_info('prompt',"prompt: \"$prompt\"");
   $out_chunkno = 0;
   $last_prompt = $prompt;
   if ($pipeline || $pipesink) {
+    # delete $wait_text which was added by the output_handler (see above)
     $filter->send_output_oob("\x08" x length($wait_text) . "\n");
     my $output = $filter->cumulative_output;
     debug_info('prompt',"cumulative_output: $output",1,1);
     process_pipeline($output,$prompt,1);
     undef $pipeline;
     undef $pipesink;
-    $filter->send_output_oob(${nl}); # start prompt on new line  
+    $filter->send_output_oob(${nl}); # start prompt on new line (TODO; check if I need this)
   }
   return $prompt;
 }
 
+# simple-call-tree-info: TODO  
 sub process_pipeline {
   my ($output,$prompt,$depth) = @_;
   local $SIG{PIPE} = 'IGNORE'; # we don't want to die if the pipeline quits
@@ -219,7 +246,7 @@ sub process_pipeline {
       # remove any remaining placeholders at this depth
       $cmd =~ s/(?<!%)${d}[0-9]+${d}(?!%)//g;
       # extract any further pipelines (into $pipeline & $pipesink), and run the next command
-      my $newcmd = expand_and_record_macros($cmd);
+      my $newcmd = expand_and_record_macros($cmd,$depth > 1 ? 0 : 1); #TODO: should this condition be reversed?
       debug_info('process_pipeline',"B: depth = ${depth}${nl}newcmd= ${newcmd}",1,1);
       my $pipeout = cloak_and_dagger2($newcmd,$prompt,$max_timeout);
       # recurse on output
@@ -237,7 +264,7 @@ sub process_pipeline {
   } else {
     # TODO: if $output is empty string, then call system($pipeline) instead
     open PIPELINE, "| $pipeline";
-    debug_info('process_pipeline',"C: depth = $depth",1,0,"output = ${output}");
+    debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = ${output}");
     print PIPELINE $output;
     close PIPELINE; # this waits until pipeline has finished
   }
@@ -246,11 +273,12 @@ sub process_pipeline {
 # Substitute for $filter->cloak_and_dagger, which works with sqlite3
 # $question = command to send to underlying REPL, $prompt = prompt string to wait for,
 # $timeout = max amount of time to wait in seconds 
+# simple-call-tree-info:   
 sub cloak_and_dagger2 {
   my ($question, $prompt, $timeout) = @_;
   $prompt ||= $filter -> last('prompt');
   if ($debug{'expect1'}) {
-    $exp->debug(1);
+    $exp->debug(1); # general debug mode
   } elsif ($debug{'expect2'}) {
     $exp->debug(2); # verbose debug mode
   }
@@ -269,6 +297,7 @@ sub cloak_and_dagger2 {
   return $before;
 }
 
+# simple-call-tree-info:   
 sub evalmacro {
   my ($val) = @_;
   my $prompt = $last_prompt . "\s*";
@@ -276,16 +305,17 @@ sub evalmacro {
   $val =~ s/^\s*//;
   # alter the pipeline so that it stores its output in $tempmacro,
   # and split it into $val2, $pipeline & $pipesink (global variables)
-  my $val2 = expand_and_record_macros($val . " |> ${tempmacro}");
+  my $val2 = expand_and_record_macros($val . " |> ${tempmacro}",1);
   debug_info('evalmacro',"val2: $val2",1,1);
   # evaluate the first part of the pipeline if necessary
-  my $pl = (length(${val2}) > 0 ? cloak_and_dagger2($val2,$prompt,$max_timeout) : '');
-  debug_info('evalmacro',"pl: $pl",1,1);
-  # Feed $pl into $pipeline & $pipesink, which should store the results into $tempmacro, and return this
-  process_pipeline($pl,$prompt,1);
+  my $output = (length(${val2}) > 0 ? cloak_and_dagger2($val2,$prompt,$max_timeout) : '');
+  debug_info('evalmacro',"output: $output",1,1);
+  # Feed $output into $pipeline & $pipesink, which should store the results into $tempmacro, and return this
+  process_pipeline($output,$prompt,1);
   return findmacro($tempmacro);
 }
 
+# simple-call-tree-info:   
 sub findmacro {
   my($macro,$expansion) = @_;
   my ($eval, $args);
@@ -318,6 +348,7 @@ sub findmacro {
   return "";
 }
 
+# simple-call-tree-info: DONE
 sub safe_backtick {
     my @command_line = @_;
     my $command_line = join ' ', @command_line;
@@ -331,9 +362,10 @@ sub safe_backtick {
     return $result
 }
 
+# simple-call-tree-info:   
 sub complete_macro {
   my($line, $prefix, @completions) = @_;
-  debug_info('complete_macro',"prefix: $prefix");
+  debug_info('complete_macro',"prefix: \"$prefix\"${nl}line: \"$line\"");
   if ($prefix =~ /^${macrochar}(?'e'<)?(?'m'\w*)$/) { # completing a macro with no args
     my $eval = $+{e};
     my $query = length($+{m}) > 0 ? "--query '^$+{m}'" : "";
@@ -357,9 +389,9 @@ sub complete_macro {
     close READER;
     chomp($expansion);
     debug_info('complete_macro',"expansion: $expansion");
-    # if $expansion begins with |< or |<< then run the pipeline to get the completion
+    # if $expansion begins with < then run the pipeline to get the completion
     if ($eval) {
-      $expansion = evalmacro($expansion);      
+      $expansion = evalmacro($expansion); 
     }
     chomp($expansion);
     unshift @completions, $expansion if $expansion;
@@ -370,12 +402,13 @@ sub complete_macro {
   return @completions;
 }
 
+# simple-call-tree-info: DONE  
 sub read_macros {
   return unless @_;
   my ($file) = @_;
   if (-f $file) {
-    -w $file or die "$saved_macros exists but is not writable!\n";
-    open MACROS, $file or die  "$saved_macros exists but is not readable!\n";
+    -w $file or die "$file exists but is not writable!\n";
+    open MACROS, $file or die  "$file exists but is not readable!\n";
     while(<MACROS>) {
       chomp;
       my($macro, $expansion) = /(\S+)\s+(.*)/;
@@ -385,6 +418,7 @@ sub read_macros {
   }
 }
 
+# simple-call-tree-info: DONE  
 sub save_macros {
   return unless $saved_macros;
   open MACROS, ">$saved_macros" or die "cannot write to $saved_macros: $!\n"; # this error may be lost
@@ -395,7 +429,7 @@ sub save_macros {
   close CMD_IN_OUT;
 }
 
-# TODO: document parameterised macros
+# simple-call-tree-info: TODO  parameterised macros
 sub help {
   return <<EOF;
 Usage: rlwrap -z '$name [-MACROCHAR] [<FILE>...]' <COMMAND>
@@ -427,13 +461,13 @@ The file arguments are processed in order, and macros in later files get priorit
 those in earlier files. If a file argument contains a / char then it is assumed to be a full
 path to the file, otherwise the file is assumed to be in \$RLWRAP_HOME or /usr/share/rlwrap
 if \$RLWRAP_HOME is unset.
-Only the macros in the last <FILE> (or \$RLWRAP_HOME/<COMMAND>) may be altered or deleted.
+Only the macros in the last <FILE> (or \$RLWRAP_HOME/<COMMAND>_macros) may be altered or deleted.
 
 PIPELINES
 
 Syntax:
-  <REPL CMD> | <SHELL CMD>     : Pipe output from REPL command into STDIN of shell command.
- <SHELL CMD> |> \$foo           : Save output from shell command into macro \$foo.
+ <REPL CMD>  | <SHELL CMD>     : Pipe output from REPL command into STDIN of shell command.
+ <SHELL CMD> |> \$foo          : Save output from shell command into macro \$foo.
  <SHELL CMD> |>> <REPL CMD> %% : Insert output from shell command into position marked by %%,
                                  and then execute REPL command. To insert the Nth line of
                                  output use \%N% (e.g. to insert 5th & 6th lines: <CMD> %5% %6%).
@@ -455,7 +489,7 @@ EXAMPLES
 
 Browse sqlite3 table names with less:               sqlite> .tables|less
 Export them to a file:                              sqlite> .tables|cat > tables.txt
-View contents of the current directory:             sqlite> |ls
+View contents of the current directory with less:   sqlite> |ls|less
 Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf --height=100%))
 Build a SELECT statement using the macro:           sqlite> SELECT * FROM \$<choosetbl;
 Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print \$1}' |>> .help %% | less
@@ -475,3 +509,5 @@ Notes:
  - If you use fzf in a pipeline set "--height=100%" in the options to avoid messing up the prompt when it returns.
 EOF
 }
+
+# NOTES: using this filter tends to create a lot of zombie processes
