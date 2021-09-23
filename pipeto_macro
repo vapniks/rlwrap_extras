@@ -48,12 +48,12 @@ my $max_timeout = 0.5;
 # Name of temporary macro used internally (should not start with < or infinite looping will occur)
 my $tempmacro = "__temp__";
 # Try to get the correct command name
-my $comm;
+my(@parts,$comm);
 if ($ENV{RLWRAP_COMMAND_PID}) {
   open IN, "/proc/$ENV{RLWRAP_COMMAND_PID}/cmdline" or die "Cannot read /proc/$ENV{RLWRAP_COMMAND_PID}/cmdline: $!\n";
-  $comm = <IN>;
+  @parts = split("\0",<IN>);
   close IN;
-  $comm =~ m"^(?:/\S*/)?([^/\s\0]+)";
+  $parts[0] =~ m"^(?:/\S*/)?([^/\s\0]+)";
   $comm = $1;
 } else {
   $filter -> command_line =~ m/(\w+).*/;
