@@ -279,7 +279,7 @@ sub cloak_and_dagger2 {
   $exp->clear_accum();
   $question =~ s/^\s*//;
   $exp->send("${question}${nl}");
-  my ($pos,$err,$match,$before,$after) = $exp->expect(ceil($timeout),'-re',$prompt);
+  my ($pos,$err,$match,$before,$after) = $exp->expect(ceil($timeout),'-re',"^\Q${prompt}\E");
   debug_info('cloak_and_dagger2',"pos: ${pos}${nl}error: \"${err}\"${nl}match: \"${match}\"${nl}before: \"${before}\"${nl}after: \"${after}\"");
   $exp->clear_accum();
   $leftover_text = $after;
