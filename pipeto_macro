@@ -468,8 +468,8 @@ Syntax:
  <SHELL CMD> |> <REPL CMD>        : Run shell command followed by REPL command, replacing any
                                     occurrences of %% in REPL command with output from shell command.
                                     To substitute for the Nth line of output use \%N%
- <SHELL CMD> |>> \$foo            : Save output from shell command into macro \$foo.
- <SHELL CMD> |>> \$foo <REPL CMD> : Combination of previous 2 lines; save shell command output into 
+ <SHELL CMD> |>> foo              : Save output from shell command into macro \$foo.
+ <SHELL CMD> |>> foo <REPL CMD>   : Combination of previous 2 lines; save shell command output into 
                                     macro \$foo, and then run REPL command after substituting any 
                                     occurrences of %% or \%N% with output from shell command.
 
@@ -501,8 +501,8 @@ Here's a more complex example (split over 2 lines) involving pipeline operators.
 which is stored in the $tbl macro, and then select some columns from that table, which are stored in the $cols macro. 
 These strings are used to build a SELECT statement which is passed to the REPL:
 
-sqlite> \$choosetbl |>> \$tbl .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
- |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$\$1:x","\$\$1}END{print x}'|>> \$cols SELECT %%%% FROM %% LIMIT 5;
+sqlite> \$choosetbl |>> tbl .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
+ |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$\$1:x","\$\$1}END{print x}'|>> cols SELECT %%%% FROM %% LIMIT 5;
 
 You could store this whole pipeline, or part of it, in another macro.
 
