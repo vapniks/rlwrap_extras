@@ -473,9 +473,9 @@ with the 5th line of output from <SHELL CMD1>, and the 1st line of output from <
 
   <CMD1> | <SHELL CMD1> |>> <CMD2> | <SHELL CMD2> |>> <CMD3> %5% %%1%%
 
-You can use pipeline operators in macros, however when a pipeline is processed macro expansion will only occur
-in the sections containing REPL commands, not the sections containing shell commands. This is so that \$'s can
-be used for other purposes by shell commands, e.g. awk variables.
+You can use pipeline operators in macros, and macros in pipelines. To use a macro char normally without expanding
+it you should double it, e.g. to use a shell variable such as \$COLUMNS in a pipeline you would write \$\$COLUMNS
+to prevent it being treated as a macro, or to use the \$\$ shell variable you would write \$\$\$\$.
 
 EXAMPLES
 
