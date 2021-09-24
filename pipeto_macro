@@ -134,10 +134,8 @@ sub debug_info {
 # Expand and/or record macros, and also extract pipeline parts from input.
 # The shell pipeline part to be processed is stored in $pipeline (a global variable), and
 # the macro name or REPL command to be processed following |> or |>> is stored in $pipesink (a global variable).
-# The part before any pipelines, and the part after |> or |>> are expanded recursively, whereas shell pipelines
-# are not expanded at all since they may contain words that look like macros but are not (e.g. $'s in awk commands).
-# If the user wants to store a shell pipeline in a macro then the whole pipeline must be stored in the macro, 
-# including the initial |
+# Doubled up occurrences of the $macrochar will not be expanded, but instead replaced by a single $macrochar,
+# this prevents problems when the $macrochar is used for other things in shell code (e.g. if $macrochar = \$)
 # If a non-zero $fix arg is supplied, then $leftover_text will be removed before returning
 # (this should only be done if the returned text is to be sent directly to the REPL).
 # simple-call-tree-info: CHECK  
@@ -146,22 +144,16 @@ sub expand_and_record_macros {
   my $expanded = $last_raw_input = $unexpanded;
   my $input = '';
   # Expand macro definitions first so that included pipelines don't get mistaken for pipelines following a macro.
-  if ($expanded =~ s/^\s*${macrochar}(?'em'\w+(\[\[.*?\]\])?)(\(\((?'ev'.*)\)\))\s*$/findmacro($+{em},$+{ev})/ge) {
+  if ($expanded =~ s/^\s*${macrochar}(?'em'[^${macrochar}]\w*(\[\[.*?\]\])?)(\(\((?'ev'.*)\)\))\s*$/findmacro($+{em},$+{ev})/ge) {
     undef $pipeline;
     undef $pipesink;
   } else {
-    # get the input, pipeline & pipesink
-    $expanded =~ /^\s*([^${pipechar}]*)(?'rest'.*)$/;
-    $input = ${1};
-    # expand macros in $input recursively (but don't remove $leftover_text):
-    if ($input =~ /${macrochar}<?\w+/) {
-      # need to do substitution first to prevent infinite recursion
-      $input =~ s/${macrochar}(?'im'<?\w+(\[\[.*?\]\])?)/findmacro($+{im})/ge;
-      my $x = expand_and_record_macros($input,0);
-      # after expansion $input may contain its own pipeline & pipesink
-      $input = $x . (${pipeline}? " ${pipechar} ${pipeline}" : " ") . (${pipesink} || "");
-    } 
-    $expanded = $input . $+{rest};
+    # keep expanding until there are no more macros to be expanded
+    while ($expanded =~ /(?<!${macrochar})${macrochar}<?[^${macrochar}]\w*/) {
+      $expanded =~ s/(?<!${macrochar})${macrochar}(?'im'<?[^${macrochar}]\w*(\[\[.*?\]\])?)/findmacro($+{im})/ge;
+    }
+    # double $macrochar's were not expanded, and can now be replaced with a single $macrochar
+    $expanded =~ s/(${macrochar})${macrochar}/$1/ge;
     # need to split again in case the location of the 1st pipesink changed after expansion:
     $expanded =~ /^(?'i'[^${pipechar}]*)(${pipechar}(?!>)(?'pl'([^${pipechar}]|${pipechar}(?!>))*))?(?'ps'${pipechar}>>?.*)?/;
     ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
@@ -240,7 +232,10 @@ sub process_pipeline {
       # remove any remaining placeholders at this depth
       $cmd =~ s/(?<!%)${d}[0-9]+${d}(?!%)//g;
       # extract any further pipelines (into $pipeline & $pipesink), and run the next command
-      my $newcmd = expand_and_record_macros($cmd,$depth > 1 ? 0 : 1); #TODO: should this condition be reversed?
+      $cmd =~ /^(?'i'[^${pipechar}]*)(${pipechar}(?!>)(?'pl'([^${pipechar}]|${pipechar}(?!>))*))?(?'ps'${pipechar}>>?.*)?/;
+      my $newcmd;
+      ($newcmd, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
+      #my $newcmd = expand_and_record_macros($cmd,$depth > 1 ? 0 : 1); 
       debug_info('process_pipeline',"B: depth = ${depth}${nl}newcmd= ${newcmd}",1,1);
       my $pipeout = cloak_and_dagger2($newcmd,$prompt,$max_timeout);
       # recurse on output
