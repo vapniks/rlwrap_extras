@@ -429,7 +429,7 @@ MACROS
 
 By default the start of a macro name is indicated by \$, and this is used in the documentation below. 
 To use a different char(s), set the MACROCHAR option as indicated in the usage string above (\$'s need 
-to be backslash quoted, e.g: to set MACROCHAR to \$\$ use '-\\\$\\\$').
+to be backslash quoted, e.g: to set MACROCHAR to \$ use '-\\\$\\\$').
 
 Syntax:
  \$foo       : Use a macro - \$foo will be replaced by its definition when command is entered.
@@ -437,6 +437,10 @@ Syntax:
  \$f<TAB>    : Select a macro using fzf - selection will be limited to macros whose names start with f.
  \$foo((ex pan sion))<ENTER> 
             : (re-)define \$foo to "ex pan sion".
+ \$foo((macro arguments were \$1 & \$2))<ENTER>
+            : defining a macro with 2 arguments
+ \$foo[[this:::that]]<ENTER>
+            : calling the macro with 2 arguments, it will expand to: "macro arguments were this & that"
  \$foo(( ))<ENTER> 
             : Delete \$foo (there must be 1 space between the opening & closing parentheses).
  \$<foo<TAB> : Expand & evaluate \$foo, and immediately place results on command line.
@@ -465,7 +469,7 @@ Syntax:
                                  output use \%N% (e.g. to insert 5th & 6th lines: <CMD> %5% %6%).
 
 The | & |>> pipeline operators can be chained together to form alternating sequences of REPL & shell commands.
-In this case the Nth output from the Mth |>> operator is referenced by using M %'s either side of the number N, 
+In this case the Nth output from the Mth |>> operator is referenced by using M %s' either side of the number N, 
 e.g. %%%2%%% for the 2nd line of output from the 3rd |>> operator. If N is 0, or there is no number between
 the %'s, then the entire output is inserted.
 You can use output from previous |>> operators after the most recent one, e.g. in this example <CMD3> is called 
@@ -475,7 +479,8 @@ with the 5th line of output from <SHELL CMD1>, and the 1st line of output from <
 
 You can use pipeline operators in macros, and macros in pipelines. To use a macro char normally without expanding
 it you should double it, e.g. to use a shell variable such as \$COLUMNS in a pipeline you would write \$\$COLUMNS
-to prevent it being treated as a macro, or to use the \$\$ shell variable you would write \$\$\$\$.
+to prevent it being treated as a macro, or to use the \$\$ shell variable you would write \$\$\$\$
+ (alternatively you could just select a different char with the -MACROCHAR option).
 
 EXAMPLES
 
