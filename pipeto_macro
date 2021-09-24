@@ -108,7 +108,7 @@ $filter -> prompt_handler(\&prompt);
 #$filter -> echo_handler(sub {$last_raw_input});   # but echo the raw (un-expanded) input
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1,'expect2'=>1,'exp_internal'=>1);
-my %debug = ('cloak_and_dagger2'=>0);
+my %debug = ('cloak_and_dagger2'=>0); # this must be 0 (no debug) or 1 (debug) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> run;
@@ -164,6 +164,7 @@ sub expand_and_record_macros {
     # so that e.g. dot commands work in sqlite3
     debug_info('expand_and_record_macros',"removing \"${leftover_text}\" from start of input");
     $input = "\x08" x length($leftover_text) . ($input||'');
+    #$input = $input||''; #DEBUG
     $leftover_text = "";
   }
   return $input;
@@ -184,7 +185,7 @@ sub output {
 # simple-call-tree-info: CHECK  
 sub prompt {
   my ($prompt) = @_;
-  debug_info('prompt',"prompt: \"$prompt\"");
+  debug_info('prompt',"last_prompt: \"$last_prompt\"${nl}prompt: \"$prompt\"");
   $out_chunkno = 0;
   $last_prompt = $prompt;
   if ($pipeline || $pipesink) {
