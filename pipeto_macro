@@ -222,34 +222,36 @@ sub process_pipeline {
     }
     debug_info('process_pipeline',"A: depth = ${depth}",1,1,"output2: ",@output2);
     $pipesink =~ /^\s*(${pipechar}>>?)\s*(.*)$/;
+    my $cmd = $2;
     if (length($1) > 2) {
-      my $cmd = $2;
-      my $d = '%' x $depth;
-      $cmd =~ s/(?<![%0-9])${d}0?${d}(?![%0-9])/@output2/g;
-      foreach (keys @output2) {
-	my $x = $_ + 1;
-	$cmd =~ s/(?<!%)${d}${x}${d}(?!%)/$output2[$_]/g;
-      }
-      # remove any remaining placeholders at this depth
-      $cmd =~ s/(?<!%)${d}[0-9]+${d}(?!%)//g;
-      # extract any further pipelines (into $pipeline & $pipesink), and run the next command
-      $cmd =~ /^(?'i'[^${pipechar}]*)(${pipechar}(?!>)(?'pl'([^${pipechar}]|${pipechar}(?!>))*))?(?'ps'${pipechar}>>?.*)?/;
-      my $newcmd;
-      ($newcmd, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
-      #my $newcmd = expand_and_record_macros($cmd,$depth > 1 ? 0 : 1); 
-      debug_info('process_pipeline',"B: depth = ${depth}${nl}newcmd= ${newcmd}",1,1);
-      my $pipeout = cloak_and_dagger2($newcmd,$prompt,$max_timeout);
-      # recurse on output
-      if ($pipeline || $pipesink) {
-	debug_info('process_pipeline',"recurse with pipeout = ${pipeout}");
-	process_pipeline($pipeout,$prompt,$depth+1);
+      if (${cmd} =~ s/^\s*(\w+)\s+(.*)$/$2/) { 
+	findmacro($1,"@output2");
       } else {
-	$filter->send_output_oob($pipeout);
+	print STDERR "Invalid pipeline!\n";
+	return;
       }
-    } elsif ($2 =~ /^\s*(\w+)\s*$/) { 
-      findmacro($1,"@output2");
+    }
+    my $d = '%' x $depth;
+    $cmd =~ s/(?<![%0-9])${d}0?${d}(?![%0-9])/@output2/g;
+    foreach (keys @output2) {
+      my $x = $_ + 1;
+      $cmd =~ s/(?<!%)${d}${x}${d}(?!%)/$output2[$_]/g;
+    }
+    # remove any remaining placeholders at this depth
+    $cmd =~ s/(?<!%)${d}[0-9]+${d}(?!%)//g;
+    # extract any further pipelines (into $pipeline & $pipesink), and run the next command
+    $cmd =~ /^(?'i'[^${pipechar}]*)(${pipechar}(?!>)(?'pl'([^${pipechar}]|${pipechar}(?!>))*))?(?'ps'${pipechar}>>?.*)?/;
+    my $newcmd;
+    ($newcmd, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
+    #my $newcmd = expand_and_record_macros($cmd,$depth > 1 ? 0 : 1); 
+    debug_info('process_pipeline',"B: depth = ${depth}${nl}newcmd= ${newcmd}",1,1);
+    my $pipeout = cloak_and_dagger2($newcmd,$prompt,$max_timeout);
+    # recurse on output
+    if ($pipeline || $pipesink) {
+      debug_info('process_pipeline',"recurse with pipeout = ${pipeout}");
+      process_pipeline($pipeout,$prompt,$depth+1);
     } else {
-      print STDERR "Invalid pipeline!\n";
+      $filter->send_output_oob($pipeout);
     }
   } else {
     # TODO: if $output is empty string, then call system($pipeline) instead
