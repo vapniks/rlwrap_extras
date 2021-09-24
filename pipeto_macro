@@ -224,7 +224,7 @@ sub process_pipeline {
     $pipesink =~ /^\s*(${pipechar}>>?)\s*(.*)$/;
     my $cmd = $2;
     if (length($1) > 2) {
-      if (${cmd} =~ s/^\s*(\w+)\s+(.*)$/$2/) { 
+      if (${cmd} =~ s/^\s*(\w+)\s*(.*)$/$2/) { 
 	findmacro($1,"@output2");
       } else {
 	print STDERR "Invalid pipeline!\n";
@@ -464,20 +464,24 @@ By default we use | as the initial pipeline char, but this can be changed by set
 option as indicated in the usage string above (\| & \¦ need to be backslash quoted, e.g. --\\\¦).
 
 Syntax:
- <REPL CMD>  | <SHELL CMD>     : Pipe output from REPL command into STDIN of shell command.
- <SHELL CMD> |> \$foo          : Save output from shell command into macro \$foo.
- <SHELL CMD> |>> <REPL CMD> %% : Insert output from shell command into position marked by %%,
-                                 and then execute REPL command. To insert the Nth line of
-                                 output use \%N% (e.g. to insert 5th & 6th lines: <CMD> %5% %6%).
+ <REPL CMD>  | <SHELL CMD>        : Pipe output from REPL command into STDIN of shell command.
+ <SHELL CMD> |> <REPL CMD>        : Run shell command followed by REPL command, replacing any
+                                    occurrences of %% in REPL command with output from shell command.
+                                    To substitute for the Nth line of output use \%N%
+ <SHELL CMD> |>> \$foo            : Save output from shell command into macro \$foo.
+ <SHELL CMD> |>> \$foo <REPL CMD> : Combination of previous 2 lines; save shell command output into 
+                                    macro \$foo, and then run REPL command after substituting any 
+                                    occurrences of %% or \%N% with output from shell command.
 
-The | & |>> pipeline operators can be chained together to form alternating sequences of REPL & shell commands.
-In this case the Nth output from the Mth |>> operator is referenced by using M %s' either side of the number N, 
-e.g. %%%2%%% for the 2nd line of output from the 3rd |>> operator. If N is 0, or there is no number between
-the %'s, then the entire output is inserted.
-You can use output from previous |>> operators after the most recent one, e.g. in this example <CMD3> is called 
+These pipeline operators can be chained together to form alternating sequences of REPL & shell commands 
+optionally intertwined with macro definitions.
+In that case the Nth output from the Mth |> or |>> operator is referenced by using M %s' either side of the 
+number N, e.g. %%%2%%% for the 2nd line of output from the 3rd |>(>) operator. If N is 0, or there is no number
+between the %'s, then the entire output is inserted.
+You can use output from previous |>(>) operators after the most recent one, e.g. in this example <CMD3> is called 
 with the 5th line of output from <SHELL CMD1>, and the 1st line of output from <SHELL CMD2>:
 
-  <CMD1> | <SHELL CMD1> |>> <CMD2> | <SHELL CMD2> |>> <CMD3> %5% %%1%%
+  <CMD1> | <SHELL CMD1> |> <CMD2> | <SHELL CMD2> |> <CMD3> %5% %%1%%
 
 You can use pipeline operators in macros, and macros in pipelines. To use a macro char normally without expanding
 it you should double it, e.g. to use a shell variable such as \$COLUMNS in a pipeline you would write \$\$COLUMNS
@@ -491,14 +495,14 @@ Export them to a file:                              sqlite> .tables|cat > tables
 View contents of the current directory with less:   sqlite> |ls|less
 Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf --height=100%))
 Build a SELECT statement using the macro:           sqlite> SELECT * FROM \$<choosetbl;
-Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print \$1}' |>> .help %% | less
+Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print \$1}' |> .help %% | less
 
 Here's a more complex example (split over 2 lines) involving pipeline operators. fzf is used to first choose a table, 
-and then select some columns from that table. Finally these strings are used to build a SELECT statement which is 
-passed to the REPL:
+which is stored in the $tbl macro, and then select some columns from that table, which are stored in the $cols macro. 
+These strings are used to build a SELECT statement which is passed to the REPL:
 
-sqlite> \$choosetbl |>> .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
- |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$\$1:x","\$\$1}END{print x}'|>> SELECT %%%% FROM %% LIMIT 5;
+sqlite> \$choosetbl |>> \$tbl .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
+ |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$\$1:x","\$\$1}END{print x}'|>> \$cols SELECT %%%% FROM %% LIMIT 5;
 
 You could store this whole pipeline, or part of it, in another macro.
 
