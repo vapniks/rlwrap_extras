@@ -106,6 +106,8 @@ my $rx_replcmd = qr/^[^${pipechar}]*/;
 my $rx_pipeline = qr/${pipechar}(?!\w*>)(?'plc'([^${pipechar}]|${pipechar}(?!\w*>))*)/;
 my $rx_pipesink = qr/${pipechar}(?'psm'\w*)>(?'psc'.*)/;
 my $rx_pipesplit = qr/(?'i'${rx_replcmd})(?'pl'${rx_pipeline})?(?'ps'${rx_pipesink})?/;
+my $rx_macro = qr/(?<!${macrochar})${macrochar}(?'m'<?[^${macrochar} ]\w*(\[\[.*?\]\])?)/;
+
 # Declare filter handlers
 $filter -> prompts_are_never_empty(1); #TODO: do we need this?
 $filter -> help_text(help());
@@ -116,7 +118,7 @@ $filter -> prompt_handler(\&prompt);
 #$filter -> echo_handler(sub {$last_raw_input});   # but echo the raw (un-expanded) input
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1,'expect2'=>1,'exp_internal'=>1);
-my %debug = ('cloak_and_dagger2'=>0); # this must be 0 (no debug) or 1 (debug) for the next line to work
+my %debug = ('cloak_and_dagger2'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> run;
@@ -157,24 +159,30 @@ sub expand_and_record_macros {
   #debug_info('expand_and_record_macros',"unexpanded = \"${unexpanded}\"\nfix = \"${fix}\"");
   my $expanded = $last_raw_input = $unexpanded;
   my $input = '';
-  my $macrorx = qr/(?<!${macrochar})${macrochar}(?'m'<?[^${macrochar} ]\w*(\[\[.*?\]\])?)/;
   # Expand macro definitions first so that included pipelines don't get mistaken for pipelines following a macro.
-  if ($expanded =~ s/^\s*${macrorx}(\(\((?'mv'.*)\)\))\s*$/findmacro($+{m},$+{mv})/ge) {
+  if ($expanded =~ s/^\s*${rx_macro}(\(\((?'mv'.*)\)\))\s*$/findmacro($+{m},$+{mv})/ge) {
+    #debug_info('expand_and_record_macros',"expanded to: ${expanded}");
     undef $pipeline;
     undef $pipesink;
   } else {
-    # keep expanding until there are no more macros to be expanded
-    while ($expanded =~ s/$macrorx/findmacro($+{m})/ge) {
-      #debug_info('expand_and_record_macros',"replace macro: \"$+{m}\"");
-      next
+    # split into parts; we only want to expand the first/input part
+    # (other parts are expanded later to allow definitions in |MACRO> operators to be used)
+    $expanded =~ ${rx_pipesplit}; # this captures $+{i}, $+{pl}, $+{plc}, $+{ps}, $+{psm} & $+{psc}
+    ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
+    # keep expanding $input & $pipeline until there are no more macros to be expanded
+    #debug_info('expand_and_record_macros',"input = \"${input}\"${nl}",1,1);
+    while ($input =~ s/${rx_macro}/findmacro($+{m})/ge
+	   || $pipeline =~ s/${rx_macro}/findmacro($+{m})/ge) {
+      # need to join & resplit in case the location of the 1st pipesink changed after expansion:
+      $expanded = $input . $pipeline . $pipesink;
+      $expanded =~ ${rx_pipesplit};
+      ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
+      #debug_info('expand_and_record_macros',"input = \"${input}\"${nl}",1,1);
     }
     # double $macrochar's were not expanded, and can now be replaced with a single $macrochar
-    $expanded =~ s/(${macrochar})${macrochar}/$1/ge;
-    #debug_info('expand_and_record_macros',"expanded = \"${expanded}\"");
-    # need to split again in case the location of the 1st pipesink changed after expansion:
-    $expanded =~ ${rx_pipesplit}; # this captures $+{i}, $+{pl}, $+{plc}, $+{ps}, $+{psm} & $+{psc}
-    ($input, $pipeline, $pipesink) = ($+{i},$+{plc},$+{ps});
-    #debug_info('expand_and_record_macros',"input = \"${input}\"${nl}leftover_text = \"${leftover_text}\"",1,1);
+    $input =~ s/(${macrochar})${macrochar}/$1/ge;
+    $pipeline =~ s/(${macrochar})${macrochar}/$1/ge;
+    #debug_info('expand_and_record_macros',"input = \"${input}\"");
   }
   if ($leftover_text && $fix) {
     # delete any leftover whitespace from previous command executed by evalmacro or process_pipeline
@@ -225,8 +233,8 @@ sub process_pipeline {
     # process the shell pipeline and store results in @output2
     # TODO: if $output is empty string, then open a one-ended pipeline instead?
     my @output2;
-    if ($pipeline) {
-      my $pid = open2(\*READER, \*WRITER, $pipeline);
+    if ($pipeline =~ $rx_pipeline) {
+      my $pid = open2(\*READER, \*WRITER, $+{plc});
       print WRITER $output;
       close WRITER;
       while (<READER>) {
@@ -239,6 +247,7 @@ sub process_pipeline {
     }
     $pipesink =~ ${rx_pipesink}; # this captures $+{psm} - the pipesink macro, and $+{psc} - the pipesink command
     #debug_info('process_pipeline',"A: depth = ${depth}\npsc = \"$+{psc}\"\npsm = \"$+{psm}\"",1,1,"output2: ",@output2);
+    # Store the output in the pipesink macro if there is one
     my ($cmd,$macroname) = ($+{psc},$+{psm});
     if (${macroname}) { 
       my ${macroname} = $+{psm};
@@ -249,20 +258,10 @@ sub process_pipeline {
 	return;
       }
     }
-    my $d = '%' x $depth;
-    $cmd =~ s/(?<![%0-9])${d}0?${d}(?![%0-9])/@output2/g;
-    foreach (keys @output2) {
-      my $x = $_ + 1;
-      $cmd =~ s/(?<!%)${d}${x}${d}(?!%)/$output2[$_]/g;
-    }
-    # remove any remaining placeholders at this depth
-    $cmd =~ s/(?<!%)${d}[0-9]+${d}(?!%)//g;
-    # extract any further pipelines (into $pipeline & $pipesink), and run the next command
-    $cmd =~ ${rx_pipesplit}; # this captures $+{i}, $+{pl}, $+{plc}, $+{ps}, $+{psm} & $+{psc}
-    my $newcmd;
-    ($newcmd, $pipeline, $pipesink) = ($+{i},$+{plc},$+{ps});
-    #debug_info('process_pipeline',"B: depth = ${depth}${nl}newcmd= ${newcmd}",1,1);
+    #debug_info('process_pipeline',"cmd: ${cmd}",1,1);
+    my $newcmd = expand_and_record_macros($cmd);    
     my $pipeout = cloak_and_dagger2($newcmd,$prompt,$max_timeout);
+    #debug_info('process_pipeline',"B: depth = ${depth}${nl}newcmd= ${newcmd}${nl}pipeout = ${pipeout}",1,1);
     # recurse on output
     if ($pipeline || $pipesink) {
       #debug_info('process_pipeline',"recurse with pipeout = ${pipeout}");
@@ -272,7 +271,7 @@ sub process_pipeline {
     }
   } else {
     # TODO: if $output is empty string, then call system($pipeline) instead
-    open PIPELINE, "| $pipeline";
+    open PIPELINE, $pipeline;
     #debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = ${output}");
     print PIPELINE $output;
     close PIPELINE; # this waits until pipeline has finished
@@ -329,7 +328,7 @@ sub findmacro {
   my ($eval, $args);
   $macro =~ /(?'e'<)?(?'m'\w+)(\[\[(?'a'.*?)\]\])?/;
   ($eval, $macro, $args) = ($+{e}, $+{m}, $+{a});
-  debug_info('findmacro',"macro: $macro\neval: $eval\nargs: $args\nexpansion: $expansion");
+  #debug_info('findmacro',"macro: $macro\neval: $eval\nargs: $args\nexpansion: $expansion");
   if ($expansion) {
     if ($expansion eq " ") {
       delete ${$expansions{$macro_files[0]}}{$macro};
