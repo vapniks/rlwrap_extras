@@ -140,15 +140,13 @@ sub debug_info {
   }
 }
 
-# TODO: change behaviour in the following way; instead of |> & |>> operators have |> & |WORD> operators
-# where the output is stored in macro $WORD. Also, only expand macros in pipesinks when processing them
-# so that they can use macros previously created with |WORD> in the pipeline, then there is no longer a
-# need for the %% substitutions.
-
 # input_handler
 # Expand and/or record macros, and also extract pipeline parts from input.
 # The shell pipeline part to be processed is stored in $pipeline (a global variable), and
-# the macro name or REPL command to be processed following |> or |>> is stored in $pipesink (a global variable).
+# the macro name or REPL command to be processed following |> is stored in $pipesink (a global variable).
+# If |> operator encloses a macro name, e.g. |mac1>, then the previous output is stored in that macro.
+# Macro expansion occurs each time a pipesink (|NAME>) operator is processed in order to make any newly
+# defined macros available for the rest of the line.
 # Doubled up occurrences of the $macrochar will not be expanded, but instead replaced by a single $macrochar,
 # this prevents problems when the $macrochar is used for other things in shell code (e.g. if $macrochar = \$)
 # If a non-zero $fix arg is supplied, then $leftover_text will be removed before returning
@@ -436,7 +434,7 @@ sub save_macros {
   close CMD_IN_OUT;
 }
 
-# simple-call-tree-info: TODO document macro assignments in pipelines
+# simple-call-tree-info: DONE ??
 sub help {
   return <<EOF;
 Usage: rlwrap -z '$name [-MACROCHAR] [--PIPECHAR] [<FILE>...]' <COMMAND>
@@ -480,24 +478,19 @@ By default we use | as the initial pipeline char, but this can be changed by set
 option as indicated in the usage string above (\| & \¦ need to be backslash quoted, e.g. --\\\¦).
 
 Syntax:
- <REPL CMD>  | <SHELL CMD>        : Pipe output from REPL command into STDIN of shell command.
- <SHELL CMD> |> <REPL CMD>        : Run shell command followed by REPL command, replacing any
-                                    occurrences of %% in REPL command with output from shell command.
-                                    To substitute for the Nth line of output use \%N%
- <SHELL CMD> |>> foo              : Save output from shell command into macro \$foo.
- <SHELL CMD> |>> foo <REPL CMD>   : Combination of previous 2 lines; save shell command output into 
-                                    macro \$foo, and then run REPL command after substituting any 
-                                    occurrences of %% or \%N% with output from shell command.
+ <REPL CMD>  | <SHELL CMD>      : Pipe output from REPL command into STDIN of shell command.
+ <SHELL CMD> |> <REPL CMD>      : Run shell command followed by REPL command, replacing any
+                                  occurrences of %% in REPL command with output from shell command.
+                                  To substitute for the Nth line of output use \%N%
+ <SHELL CMD> |foo>              : Save output from shell command into macro \$foo.
+ <SHELL CMD> |foo> <REPL CMD>   : Combination of previous 2 lines; save shell command output into 
+                                  macro \$foo, and then run REPL command after expanding any macros
+                                  (including \$foo).
 
 These pipeline operators can be chained together to form alternating sequences of REPL & shell commands 
-optionally intertwined with macro definitions.
-In that case the Nth output from the Mth |> or |>> operator is referenced by using M %s' either side of the 
-number N, e.g. %%%2%%% for the 2nd line of output from the 3rd |>(>) operator. If N is 0, or there is no number
-between the %'s, then the entire output is inserted.
-You can use output from previous |>(>) operators after the most recent one, e.g. in this example <CMD3> is called 
-with the 5th line of output from <SHELL CMD1>, and the 1st line of output from <SHELL CMD2>:
-
-  <CMD1> | <SHELL CMD1> |> <CMD2> | <SHELL CMD2> |> <CMD3> %5% %%1%%
+optionally intertwined with macro definitions. The newly defined macros can be called at any later stage
+in the pipeline, for example:
+    <CMD1> | <SHELL CMD1> |out1> <CMD2> | <SHELL CMD2> |out2> <CMD3> \$out1 \$out2
 
 You can use pipeline operators in macros, and macros in pipelines. To use a macro char normally without expanding
 it you should double it, e.g. to use a shell variable such as \$COLUMNS in a pipeline you would write \$\$COLUMNS
@@ -511,14 +504,15 @@ Export them to a file:                              sqlite> .tables|cat > tables
 View contents of the current directory with less:   sqlite> |ls|less
 Create a macro for selecting a table using fzf:     sqlite> \$choosetbl((.tables|fzf --height=100%))
 Build a SELECT statement using the macro:           sqlite> SELECT * FROM \$<choosetbl;
-Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print \$1}' |> .help %% | less
+Select a command using fzf and view its usage       sqlite> .help | fzf | awk '{print \$1}' |cmd> .help \$cmd | less
 
-Here's a more complex example (split over 2 lines) involving pipeline operators. fzf is used to first choose a table, 
-which is stored in the \$tbl macro, and then select some columns from that table, which are stored in the \$cols macro. 
-These strings are used to build a SELECT statement which is passed to the REPL:
+Here's a more complex example (split over 2 lines) involving pipeline operators. 
+First the \$choosetbl macro defined above is used to choose a table which is stored in \$tbl.
+Then the column names are extracted from the schema for \$tbl and sent to fzf for user to select from.
+Finally the column contents are displayed using a SELECT statement in the sqlite3 REPL:
 
-sqlite> \$choosetbl |>> tbl .schema %% |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
- |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$\$1:x","\$\$1}END{print x}'|>> cols SELECT %%%% FROM %% LIMIT 5;
+sqlite> \$choosetbl |tbl> .schema \$tbl |grep "CREATE TABLE"|sed -e 's/[^()]*(\(.*\))/\\1/g' -e 's/,\s*/\\r\\n/g'\\
+ |fzf --height=100%|awk 'BEGIN{x=""}{x=(!x)?\$\$1:x","\$\$1}END{print x}'|cols> SELECT \$cols FROM \$tbl LIMIT 5;
 
 You could store this whole pipeline, or part of it, in another macro.
 
