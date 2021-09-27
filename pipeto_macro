@@ -40,9 +40,9 @@ my $wait_text = "wait ...";
 # It should be a string that is unlikely to occur in any REPL
 my $argsep = ":::";
 # The char used to indicate the start of a macro name (it should be single quoted).
-my $macrochar = '\$';
+my $macrochar = '$';
 # The first char used for piping operators, e.g: |, |> & |>>
-my $pipechar = '\|';
+my $pipechar = '|';
 # Maximum amount of time to wait for a REPL command to return. TODO: should this be an option?
 my $max_timeout = 0.5;
 # Name of temporary macro used internally (should not start with < or infinite looping will occur)
@@ -98,15 +98,16 @@ if ($comm && (length($comm) > 0)) {
   open(CMD_IN_OUT, "+<&" . $ENV{RLWRAP_MASTER_PTY_FD}) or die "Can't dup rlwrap file descriptor: $!";
   $exp = Expect->exp_init(\*CMD_IN_OUT);
 }
-
+my $macrocharq = "\Q${macrochar}\E";
+my $pipecharq = "\Q${pipechar}\E";
 # Regexps for capturing pipeline parts: $+{i} = input, $+{pl} = shell pipeline including initial pipe,
 # $+{plc} = shell pipeline commands (minus initial pipe), $+{ps} = pipesink including initial pipe,
 # $+{psm} = pipesink macro name (if any), $+{psc} = pipesink commands (excluding initial pipe & macro name)
-my $rx_replcmd = qr/^[^${pipechar}]*/;
-my $rx_pipeline = qr/${pipechar}(?!\w*>)(?'plc'([^${pipechar}]|${pipechar}(?!\w*>))*)/;
-my $rx_pipesink = qr/${pipechar}(?'psm'\w*)>(?'psc'.*)/;
+my $rx_replcmd = qr/^[^${pipecharq}]*/;
+my $rx_pipeline = qr/${pipecharq}(?!\w*>)(?'plc'([^${pipecharq}]|${pipecharq}(?!\w*>))*)/;
+my $rx_pipesink = qr/${pipecharq}(?'psm'\w*)>(?'psc'.*)/;
 my $rx_pipesplit = qr/(?'i'${rx_replcmd})(?'pl'${rx_pipeline})?(?'ps'${rx_pipesink})?/;
-my $rx_macro = qr/(?<!${macrochar})${macrochar}(?'m'<?[^${macrochar} ]\w*(\[\[.*?\]\])?)/;
+my $rx_macro = qr/(?<!${macrocharq})${macrocharq}(?'m'<?[^${macrocharq} ]\w*(\[\[.*?\]\])?)/;
 
 # Declare filter handlers
 $filter -> prompts_are_never_empty(1); #TODO: do we need this?
@@ -118,7 +119,7 @@ $filter -> prompt_handler(\&prompt);
 #$filter -> echo_handler(sub {$last_raw_input});   # but echo the raw (un-expanded) input
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1,'expect2'=>1,'exp_internal'=>1);
-my %debug = ('cloak_and_dagger2'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
+my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>1); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> run;
@@ -178,9 +179,9 @@ sub expand_and_record_macros {
       #debug_info('expand_and_record_macros',"input = \"${input}\"${nl}",1,1);
     }
     # double $macrochar's were not expanded, and can now be replaced with a single $macrochar
-    $input =~ s/(${macrochar})${macrochar}/$1/ge;
-    $pipeline =~ s/(${macrochar})${macrochar}/$1/ge;
-    #debug_info('expand_and_record_macros',"input = \"${input}\"");
+    $input =~ s/(${macrocharq})${macrocharq}/$1/ge;
+    $pipeline =~ s/(${macrocharq})${macrocharq}/$1/ge;
+    debug_info('expand_and_record_macros',"input = \"${input}\"${nl}pipeline = ${pipeline}");
   }
   if ($leftover_text && $fix) {
     # delete any leftover whitespace from previous command executed by evalmacro or process_pipeline
@@ -229,7 +230,6 @@ sub process_pipeline {
   local $SIG{PIPE} = 'IGNORE'; # we don't want to die if the pipeline quits
   if ($pipesink) {
     # process the shell pipeline and store results in @output2
-    # TODO: if $output is empty string, then open a one-ended pipeline instead?
     my @output2;
     if ($pipeline =~ $rx_pipeline) {
       my $pid = open2(\*READER, \*WRITER, $+{plc});
@@ -268,11 +268,12 @@ sub process_pipeline {
       $filter->send_output_oob($pipeout);
     }
   } else {
-    # TODO: if $output is empty string, then call system($pipeline) instead
-    open PIPELINE, $pipeline;
-    #debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = ${output}");
-    print PIPELINE $output;
-    close PIPELINE; # this waits until pipeline has finished
+    if ($pipeline =~ $rx_pipeline) {
+      open PIPELINE, "| $+{plc}"; # don't replace this with $pipeline, since the $pipechar might not be |
+      #debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = ${output}");
+      print PIPELINE $output;
+      close PIPELINE; # this waits until pipeline has finished
+    }
   }
 }
 
@@ -306,8 +307,8 @@ sub cloak_and_dagger2 {
 sub evalmacro {
   my ($val) = @_;
   my $prompt = $last_prompt . "\s*";
-  #debug_info('evalmacro',"val: $val");
   $val =~ s/^\s*//;
+  #debug_info('evalmacro',"val: $val");
   # alter the pipeline so that it stores its output in $tempmacro,
   # and split it into $val2, $pipeline & $pipesink (global variables)
   my $val2 = expand_and_record_macros($val . " ${pipechar}${tempmacro}> ",1);
@@ -341,7 +342,7 @@ sub findmacro {
 	  my $i = 1;
 	  foreach (split(/${argsep}/,$args)) {
 	    # TODO: macroexpand args? could cause problems if they contain pipes, but would be very convenient
-	    $val =~ s/(?<!${macrochar})${macrochar}${i}/$_/g;
+	    $val =~ s/(?<!${macrocharq})${macrocharq}${i}/$_/g;
 	    $i += 1;
 	  }
 	}
@@ -371,7 +372,7 @@ sub safe_backtick {
 sub complete_macro {
   my($line, $prefix, @completions) = @_;
   #debug_info('complete_macro',"prefix: \"$prefix\"${nl}line: \"$line\"");
-  if ($prefix =~ /^${macrochar}(?'e'<)?(?'m'\w*)$/) { # completing a macro with no args
+  if ($prefix =~ /^${macrocharq}(?'e'<)?(?'m'\w*)$/) { # completing a macro with no args
     my $eval = $+{e};
     my $query = length($+{m}) > 0 ? "--query '^$+{m}'" : "";
     my @items;
@@ -400,7 +401,7 @@ sub complete_macro {
     }
     chomp($expansion);
     unshift @completions, $expansion if $expansion;
-  } elsif ($prefix =~ /^${macrochar}(<?\w*\[\[.*?\]\])$/) { # completing a macro with args
+  } elsif ($prefix =~ /^${macrocharq}(<?\w*\[\[.*?\]\])$/) { # completing a macro with args
     my $expansion = findmacro($1);
     unshift @completions, $expansion if $expansion;
   }
@@ -444,25 +445,24 @@ NOTE: you may need to call rlwrap with -b '' to prevent '\$' being interpreted a
 MACROS
 
 By default the start of a macro name is indicated by \$, and this is used in the documentation below. 
-To use a different char(s), set the MACROCHAR option as indicated in the usage string above (\$'s need 
-to be backslash quoted, e.g: to set MACROCHAR to \$ use '-\\\$\\\$').
+To use a different char(s), set the MACROCHAR option as indicated in the usage string above.
 
 Syntax:
  \$foo       : Use a macro - \$foo will be replaced by its definition when command is entered.
  \$foo<TAB>  : Expand it right now - \$foo will be replaced by its definition immediately.
  \$f<TAB>    : Select a macro using fzf - selection will be limited to macros whose names start with f.
  \$foo((ex pan sion))<ENTER> 
-            : (re-)define \$foo to "ex pan sion".
+             : (re-)define \$foo to "ex pan sion".
  \$foo((macro arguments were \$1 & \$2))<ENTER>
-            : defining a macro with 2 arguments
+             : defining a macro with 2 arguments
  \$foo[[this:::that]]<ENTER>
-            : calling the macro with 2 arguments, it will expand to: "macro arguments were this & that"
+             : calling the macro with 2 arguments, it will expand to: "macro arguments were this & that"
  \$foo(( ))<ENTER> 
-            : Delete \$foo (there must be 1 space between the opening & closing parentheses).
+             : Delete \$foo (there must be 1 space between the opening & closing parentheses).
  \$<foo<TAB> : Expand & evaluate \$foo, and immediately place results on command line.
-              If you use this kind of macro normally without TAB completion then it will be 
-              expanded & evaluated when the entire command line is entered, but before the line
-              is send to the REPL interpreter. See below for some examples.
+               If you use this kind of macro normally without TAB completion then it will be 
+               expanded & evaluated when the entire command line is entered, but before the line
+               is send to the REPL interpreter. See below for some examples.
 
 Macros are kept between sessions in \$RLWRAP_HOME/<COMMAND>_macros if no <FILE> argument
 is supplied, or the last <FILE> argument if there are any.
@@ -475,7 +475,7 @@ Only the macros in the last <FILE> (or \$RLWRAP_HOME/<COMMAND>_macros) may be al
 PIPELINES
 
 By default we use | as the initial pipeline char, but this can be changed by setting the PIPECHAR
-option as indicated in the usage string above (\| & \¦ need to be backslash quoted, e.g. --\\\¦).
+option as indicated in the usage string above (you should quote pipe chars).
 
 Syntax:
  <REPL CMD>  | <SHELL CMD>      : Pipe output from REPL command into STDIN of shell command.
