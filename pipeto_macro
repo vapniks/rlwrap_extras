@@ -241,7 +241,7 @@ sub process_pipeline {
       }
       close READER;
     } else {
-      @output2 = split(/${nl}/,$output);
+      @output2 = split(/\n/,$output);
     }
     $pipesink =~ ${rx_pipesink}; # this captures $+{psm} - the pipesink macro, and $+{psc} - the pipesink command
     #debug_info('process_pipeline',"A: depth = ${depth}\npsc = \"$+{psc}\"\npsm = \"$+{psm}\"",1,1,"output2: ",@output2);
