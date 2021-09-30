@@ -47,18 +47,9 @@ my $pipechar = '|';
 my $max_timeout = 0.5;
 # Name of temporary macro used internally (should not start with < or infinite looping will occur)
 my $tempmacro = "__temp__";
-# Try to get the correct command name
-my(@parts,$comm);
-if ($ENV{RLWRAP_COMMAND_PID}) {
-  open IN, "/proc/$ENV{RLWRAP_COMMAND_PID}/cmdline" or die "Cannot read /proc/$ENV{RLWRAP_COMMAND_PID}/cmdline: $!\n";
-  @parts = split("\0",<IN>);
-  close IN;
-  $parts[0] =~ m"^(?:/\S*/)?([^/\s\0]+)";
-  $comm = $1;
-} else {
-  $filter -> command_line =~ m/(\w+).*/;
-  $comm = $1;
-}
+# Get the command name
+my @cmdline = split(/ /,$filter->command_line);
+my $comm = (split(/\//,$cmdline[0]))[-1];
 #print STDERR "\$comm = \"${comm}\"\n";
 # newline char (sqlite3 acts strangely without this fix):
 my $nl = ($comm =~ /sqlite3|minetest|psql/) ? "\n\r" : "\n";
