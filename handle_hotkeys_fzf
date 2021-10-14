@@ -222,9 +222,8 @@ sub fzf_complete_history_word {
 ############################## helper functions #########################################################
 
 sub get_command {
-  my $line = (read_file("/proc/$ENV{RLWRAP_COMMAND_PID}/cmdline"))[0];
-  $line =~ m"^(?:/\S*/)?([^/\s\0]+)";
-  return $1;
+  my @cmdline = split(/ /,$filter->command_line);
+  return (split(/\//,$cmdline[0]))[-1];
 }
 
 sub document_all_hotkeys {
