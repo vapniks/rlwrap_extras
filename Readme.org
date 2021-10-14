@@ -1,5 +1,8 @@
 * About
-Some filters for [[https://github.com/hanslub42/rlwrap][rlwrap]].
+Some filters and completions files for [[https://github.com/hanslub42/rlwrap][rlwrap]].
+* Installation
+Place the completions files in your $RLWRAP_HOME directory (e.g. ~/.rlwrap),
+and the filters in your $RLWRAP_FILTERDIR directory (e.g. ~/.rlwrap/filters).
 * Usage
 Use rlwrap's -z option to invoke a filter: =rlwrap -z "<FILTER>" <OTHER_OPTS> <CMD>=
 
