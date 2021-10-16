@@ -470,13 +470,9 @@ option as indicated in the usage string above (you should quote pipe chars).
 
 Syntax:
  <REPL CMD>  | <SHELL CMD>      : Pipe output from REPL command into STDIN of shell command.
- <SHELL CMD> |> <REPL CMD>      : Run shell command followed by REPL command, replacing any
-                                  occurrences of %% in REPL command with output from shell command.
-                                  To substitute for the Nth line of output use \%N%
  <SHELL CMD> |foo>              : Save output from shell command into macro \$foo.
- <SHELL CMD> |foo> <REPL CMD>   : Combination of previous 2 lines; save shell command output into 
-                                  macro \$foo, and then run REPL command after expanding any macros
-                                  (including \$foo).
+ <SHELL CMD> |foo> <REPL CMD>   : As above but then run <REPL CMD> after replacing each occurrence
+                                  of \$foo with the output from <SHELL CMD>.
 
 These pipeline operators can be chained together to form alternating sequences of REPL & shell commands 
 optionally intertwined with macro definitions. The newly defined macros can be called at any later stage
