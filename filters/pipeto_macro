@@ -12,6 +12,7 @@ use POSIX qw(:signal_h ceil);
 use strict;
 use IPC::Open2;
 use Expect;
+use List::Util 'max';
 
 # We want any piped pager to receive SIGWINCH.
 # SIGWINCH is not in POSIX, which means that POSIX.pm doesn't
@@ -333,7 +334,7 @@ sub findmacro {
 	  my $i = 1;
 	  foreach (split(/${argsep}/,$args)) {
 	    # TODO: macroexpand args? could cause problems if they contain pipes, but would be very convenient
-	    $val =~ s/(?<!${macrocharq})${macrocharq}${i}/$_/g;
+	    $val =~ s/${macrocharq}${i}/$_/g;
 	    $i += 1;
 	  }
 	}
@@ -359,9 +360,10 @@ sub safe_backtick {
     return $result
 }
 
-# simple-call-tree-info: CHECK  
+# simple-call-tree-info: CHECK
 sub complete_macro {
   my($line, $prefix, @completions) = @_;
+  my $expansion;
   #debug_info('complete_macro',"prefix: \"$prefix\"${nl}line: \"$line\"");
   if ($prefix =~ /^${macrocharq}(?'e'<)?(?'m'\w*)$/) { # completing a macro with no args
     my $eval = $+{e};
@@ -371,9 +373,21 @@ sub complete_macro {
     foreach (@macro_files) {
       my $file = $_;
       foreach (keys %{$expansions{$file}}) {
-	if (!$seen{$_}) {
-	  push(@items,$_ . " " . ${$expansions{$file}}{$_});
-	  $seen{$_} = 1;
+	my $name = $_;
+	if (!$seen{$name}) {
+	  $expansion = ${$expansions{$file}}{$name};
+	  # macros with arguments are displayed differently
+	  my @argmatches = $expansion =~ m/(?<=${macrocharq})[0-9]/g;
+	  if ($#argmatches > -1) {
+	    my $argstr = "[[${macrochar}1";
+	    for (my $i = 2;$i <= max(@argmatches); $i++) {
+	      $argstr .= ":::${macrochar}${i}"
+	    }
+	    push(@items,$name . " " . $macrochar . $name . $argstr . "]] => " . $expansion)	    
+	  } else {
+	    push(@items,$name . " " . $expansion);	    
+	  }
+	  $seen{$name} = 1;
 	}
       }
     }
@@ -382,18 +396,22 @@ sub complete_macro {
     local $\ = "\n";
     foreach (@items) { print WRITER $_; }
     close WRITER;
-    my $expansion = <READER>;
+    $expansion = <READER>;
     close READER;
     chomp($expansion);
     #debug_info('complete_macro',"expansion: $expansion");
-    # if $expansion begins with < then run the pipeline to get the completion
-    if ($eval) {
-      $expansion = evalmacro($expansion); 
+    if ($expansion =~ /^(${macrocharq}\w*\[\[.*\]\]) => /) {
+      $expansion = $1;
+    } else {
+      # if $expansion begins with < then run the pipeline to get the completion
+      if ($eval) {
+	$expansion = evalmacro($expansion); 
+      }
     }
     chomp($expansion);
     unshift @completions, $expansion if $expansion;
   } elsif ($prefix =~ /^${macrocharq}(<?\w*\[\[.*?\]\])$/) { # completing a macro with args
-    my $expansion = findmacro($1);
+    $expansion = findmacro($1);
     unshift @completions, $expansion if $expansion;
   }
   return @completions;
