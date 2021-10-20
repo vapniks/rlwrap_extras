@@ -45,7 +45,6 @@ $filter -> hotkey_handler(\&hotkey);
 
 $filter -> run;
 
-
 # A hotkey handler is called with five parameters:
 #   1: the key sequence that triggered rlwrap-handle-hotkey
 #   2: the prefix, i.e. the input line up to (but not including) the cursor
