@@ -111,7 +111,7 @@ $filter -> prompt_handler(\&prompt);
 #$filter -> echo_handler(sub {$last_raw_input});   # but echo the raw (un-expanded) input
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1,'expect2'=>1,'exp_internal'=>1);
-my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>1); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
+my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> run;
@@ -173,7 +173,7 @@ sub expand_and_record_macros {
     # double $macrochar's were not expanded, and can now be replaced with a single $macrochar
     $input =~ s/(${macrocharq})${macrocharq}/$1/ge;
     $pipeline =~ s/(${macrocharq})${macrocharq}/$1/ge;
-    debug_info('expand_and_record_macros',"input = \"${input}\"${nl}pipeline = ${pipeline}");
+    #debug_info('expand_and_record_macros',"input = \"${input}\"${nl}pipeline = ${pipeline}");
   }
   if ($leftover_text && $fix) {
     # delete any leftover whitespace from previous command executed by evalmacro or process_pipeline
@@ -224,12 +224,13 @@ sub process_pipeline {
     # process the shell pipeline and store results in @output2
     my @output2;
     if ($pipeline =~ $rx_pipeline) {
+      #debug_info('process_pipeline',"plc = $+{plc}");
       my $pid = open2(\*READER, \*WRITER, $+{plc});
       print WRITER $output;
       close WRITER;
       while (<READER>) {
-	$_ =~ s/(^\s*|\s*$)//g;
-	push @output2, $_;
+      	$_ =~ s/(^\s*|\s*$)//g;
+      	push @output2, $_;
       }
       close READER;
     } else {
@@ -261,6 +262,8 @@ sub process_pipeline {
     }
   } else {
     if ($pipeline =~ $rx_pipeline) {
+      #debug_info('process_pipeline',"plc = $+{plc}, output = \"${output}\"");
+      local $SIG{PIPE} =  'IGNORE'; # we don't want to die if the pipeline quits
       open PIPELINE, "| $+{plc}"; # don't replace this with $pipeline, since the $pipechar might not be |
       #debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = ${output}");
       print PIPELINE $output;
@@ -334,7 +337,7 @@ sub findmacro {
 	  my $i = 1;
 	  foreach (split(/${argsep}/,$args)) {
 	    # TODO: macroexpand args? could cause problems if they contain pipes, but would be very convenient
-	    $val =~ s/${macrocharq}${i}/$_/g;
+	    $val =~ s/(?<!${macrocharq})${macrocharq}${i}/$_/g;
 	    $i += 1;
 	  }
 	}
@@ -377,7 +380,7 @@ sub complete_macro {
 	if (!$seen{$name}) {
 	  $expansion = ${$expansions{$file}}{$name};
 	  # macros with arguments are displayed differently
-	  my @argmatches = $expansion =~ m/(?<=${macrocharq})[0-9]/g;
+	  my @argmatches = $expansion =~ m/(?<!${macrocharq})${macrocharq}([0-9])/g;
 	  if ($#argmatches > -1) {
 	    my $argstr = "[[${macrochar}1";
 	    for (my $i = 2;$i <= max(@argmatches); $i++) {
