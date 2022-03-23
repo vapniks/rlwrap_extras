@@ -1,0 +1,2 @@
+graphdiagram $PCHAR echo "$1"|graph-easy --boxart|less
+feedgnuplot $PCHAR feedgnuplot --terminal "dumb ${COLUMNS},${LINES}" --exit
