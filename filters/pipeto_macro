@@ -330,9 +330,11 @@ sub findmacro {
   #debug_info('findmacro',"macro: $macro\neval: $eval\nargs: $args\nexpansion: $expansion");
   if ($expansion) {
     if ($expansion eq " ") {
-      delete ${$expansions{$macro_files[0]}}{$macro};
+      foreach (@macro_files) {
+	delete ${$expansions{$_}}{$macro};
+      }
     } else {
-      return ${$expansions{$macro_files[0]}}{$macro} = $expansion;
+      return ${$expansions{$saved_macros}}{$macro} = $expansion;
     }
   } else {
     foreach (@macro_files) {
