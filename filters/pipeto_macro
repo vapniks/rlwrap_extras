@@ -543,6 +543,7 @@ any newly created macros will be stored in the last file when rlwrap quits.
 Within the macro definition any occurrences of \$PCHAR will be replaced by the PIPECHAR value (or | by default),
 and \$MCHAR will be replaced with the MACROCHAR value (or \$ by default).
 This makes it easier to share commonly used macros between different REPLS.
+Sometimes you may have 2 REPLs running at the same time, and you may want to pass macros between them.
 To reload/write the macros without quitting you must first declare a couple of hotkeys for these actions in 
 your ~/.inputrc file, e.g:
 "\\C-x\\C-r": rlwrap-hotkey
