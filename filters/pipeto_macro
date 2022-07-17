@@ -98,7 +98,8 @@ if ($comm && (length($comm) > 0)) {
 }
 my $macrocharq = "\Q${macrochar}\E";
 my $pipecharq = "\Q${pipechar}\E";
-my $savemacros_key = ($ENV{RLWRAP_SAVEMACROS_KEY} or '\C-x\C-w'); 
+my $writemacros_key = ($ENV{RLWRAP_WRITEMACROS_KEY} or '\C-x\C-w');
+my $readmacros_key = ($ENV{RLWRAP_READMACROS_KEY} or '\C-x\C-r'); 
 # Regexps for capturing pipeline parts: $+{i} = input, $+{pl} = shell pipeline including initial pipe,
 # $+{plc} = shell pipeline commands (minus initial pipe), $+{ps} = pipesink including initial pipe,
 # $+{psm} = pipesink macro name (if any), $+{psc} = pipesink commands (excluding initial pipe & macro name)
@@ -120,7 +121,7 @@ $filter -> prompt_handler(\&prompt);
 my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
-$filter -> hotkey_handler(\&save_macros_hotkey);
+$filter -> hotkey_handler(\&write_macros_hotkey);
 $filter -> run;
 
 # Print debug info: 1st arg should be the name of the function from which it is called,
@@ -479,10 +480,10 @@ sub translate_control {
 }
 
 # Save the current macros without exiting
-sub save_macros_hotkey {
+sub write_macros_hotkey {
   my ($keyseq, @other_params) = @_;
-  if ( $keyseq eq translate_from_readline_keynotation($savemacros_key)) {
-    print STDERR "macros saved to $saved_macros\n";
+  if ( $keyseq eq translate_from_readline_keynotation($writemacros_key)) {
+    print STDERR "macros written to $saved_macros\n";
     save_macros();
     return ("", @other_params);
   } else {
@@ -536,7 +537,7 @@ This makes it easier to share commonly used macros between different REPLS.
 To save the macros without quitting you must first declare a hotkey for this in your ~/.inputrc file, e.g:
 "\\C-x\\C-w": rlwrap-hotkey 
 You can use any key sequence you like, but if it is different from the default "\\C-x\\C-w" then you need 
-to set the environment variable \$RLWRAP_SAVEMACROS_KEY to indicate the key sequence.
+to set the environment variable \$RLWRAP_WRITEMACROS_KEY to indicate the key sequence.
 NOTE: be careful not to use keys that may be intercepted by the terminal driver or other filters, 
 e.g. "\\C-s" which freezes the terminal.
 
