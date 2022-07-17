@@ -481,14 +481,11 @@ sub translate_control {
 # Save the current macros without exiting
 sub save_macros_hotkey {
   my ($keyseq, @other_params) = @_;
-  print STDERR "hotkey pressed: ${keyseq}\n";
-  #TODO: check this keysequence is OK. Make it user definable if possible.
   if ( $keyseq eq translate_from_readline_keynotation($savemacros_key)) {
     print STDERR "macros saved to $saved_macros\n";
     save_macros();
     return ("", @other_params);
   } else {
-    print STDERR "hotkey not recognized\n";
     return ($keyseq, @other_params)
   }
 }
