@@ -90,7 +90,7 @@ if ($comm && (length($comm) > 0)) {
     read_macros($saved_macros);
   }
   # save macros before quitting
-  $SIG{__DIE__} = \&save_macros;
+  $SIG{__DIE__} = \&save_macros_and_quit;
   # when wrapping a command this is needed for sending commands behind the scenes
   # with the cloak_and_dagger2 procedure
   open(CMD_IN_OUT, "+<&" . $ENV{RLWRAP_MASTER_PTY_FD}) or die "Can't dup rlwrap file descriptor: $!";
@@ -98,6 +98,7 @@ if ($comm && (length($comm) > 0)) {
 }
 my $macrocharq = "\Q${macrochar}\E";
 my $pipecharq = "\Q${pipechar}\E";
+my $savemacros_key = ($ENV{RLWRAP_SAVEMACROS_KEY} or '\C-x\C-w'); 
 # Regexps for capturing pipeline parts: $+{i} = input, $+{pl} = shell pipeline including initial pipe,
 # $+{plc} = shell pipeline commands (minus initial pipe), $+{ps} = pipesink including initial pipe,
 # $+{psm} = pipesink macro name (if any), $+{psc} = pipesink commands (excluding initial pipe & macro name)
@@ -119,6 +120,7 @@ $filter -> prompt_handler(\&prompt);
 my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
+$filter -> hotkey_handler(\&save_macros_hotkey);
 $filter -> run;
 
 # Print debug info: 1st arg should be the name of the function from which it is called,
@@ -456,6 +458,41 @@ sub save_macros {
   close CMD_IN_OUT;
 }
 
+sub save_macros_and_quit {
+  save_macros();
+  close CMD_IN_OUT;
+}
+
+# Translate from Readline "\C-x" notation to corresponding key. E.g. translate_from_readline_keynotation("\C-m") = '\0x13'
+sub translate_from_readline_keynotation {
+    my ($keyseq) = @_;
+    $keyseq =~ s/\\C-(.)/translate_control($1)/ge;
+    $keyseq =~ s/\\M-/\e/g; # @@@ this allows nonsense like "\C-\M-"
+    return $keyseq;
+}
+
+# translate_control("m") == translate_control("M") ==  '\0x13' etc. 
+sub translate_control { 
+    my ($ctrlkey) = @_;
+    $ctrlkey =  uc $ctrlkey; # Don't discriminate between \C-M and \C-m
+    return pack("c", unpack("c", $ctrlkey) - 64);
+}
+
+# Save the current macros without exiting
+sub save_macros_hotkey {
+  my ($keyseq, @other_params) = @_;
+  print STDERR "hotkey pressed: ${keyseq}\n";
+  #TODO: check this keysequence is OK. Make it user definable if possible.
+  if ( $keyseq eq translate_from_readline_keynotation($savemacros_key)) {
+    print STDERR "macros saved to $saved_macros\n";
+    save_macros();
+    return ("", @other_params);
+  } else {
+    print STDERR "hotkey not recognized\n";
+    return ($keyseq, @other_params)
+  }
+}
+
 # simple-call-tree-info: DONE ??
 sub help {
   return <<EOF;
@@ -499,6 +536,13 @@ any newly created macros will be stored in the last file when rlwrap quits.
 Within the macro definition any occurrences of \$PCHAR will be replaced by the PIPECHAR value (or | by default),
 and \$MCHAR will be replaced with the MACROCHAR value (or \$ by default).
 This makes it easier to share commonly used macros between different REPLS.
+To save the macros without quitting you must first declare a hotkey for this in your ~/.inputrc file, e.g:
+"\\C-x\\C-w": rlwrap-hotkey 
+You can use any key sequence you like, but if it is different from the default "\\C-x\\C-w" then you need 
+to set the environment variable \$RLWRAP_SAVEMACROS_KEY to indicate the key sequence.
+NOTE: be careful not to use keys that may be intercepted by the terminal driver or other filters, 
+e.g. "\\C-s" which freezes the terminal.
+
 
 PIPELINES
 
