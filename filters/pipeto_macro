@@ -13,6 +13,7 @@ use strict;
 use IPC::Open2;
 use Expect;
 use List::Util 'max';
+use Storable qw(dclone);
 
 # We want any piped pager to receive SIGWINCH.
 # SIGWINCH is not in POSIX, which means that POSIX.pm doesn't
@@ -121,7 +122,7 @@ $filter -> prompt_handler(\&prompt);
 my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
-$filter -> hotkey_handler(\&write_macros_hotkey);
+$filter -> hotkey_handler(\&hotkey_handler);
 $filter -> run;
 
 # Print debug info: 1st arg should be the name of the function from which it is called,
@@ -480,14 +481,22 @@ sub translate_control {
 }
 
 # Save the current macros without exiting
-sub write_macros_hotkey {
+sub hotkey_handler {
   my ($keyseq, @other_params) = @_;
   if ( $keyseq eq translate_from_readline_keynotation($writemacros_key)) {
     print STDERR "macros written to $saved_macros\n";
     save_macros();
     return ("", @other_params);
+  } elsif ( $keyseq eq translate_from_readline_keynotation($readmacros_key)) {
+    # For some unknown reason the array looped over gets its contents deleted
+    # so we need to make a deep copy here to preserve @macro_files
+    my @macro_files_copy = @{ dclone(\@macro_files) };
+    foreach ( @macro_files_copy ) {
+      read_macros($_);
+    }
+    return("", @other_params);
   } else {
-    return ($keyseq, @other_params)
+    return($keyseq, @other_params);
   }
 }
 
@@ -534,10 +543,12 @@ any newly created macros will be stored in the last file when rlwrap quits.
 Within the macro definition any occurrences of \$PCHAR will be replaced by the PIPECHAR value (or | by default),
 and \$MCHAR will be replaced with the MACROCHAR value (or \$ by default).
 This makes it easier to share commonly used macros between different REPLS.
-To save the macros without quitting you must first declare a hotkey for this in your ~/.inputrc file, e.g:
-"\\C-x\\C-w": rlwrap-hotkey 
-You can use any key sequence you like, but if it is different from the default "\\C-x\\C-w" then you need 
-to set the environment variable \$RLWRAP_WRITEMACROS_KEY to indicate the key sequence.
+To reload/write the macros without quitting you must first declare a couple of hotkeys for these actions in 
+your ~/.inputrc file, e.g:
+"\\C-x\\C-r": rlwrap-hotkey
+"\\C-x\\C-w": rlwrap-hotkey
+You can use any key sequences you like, but if it is different from the defaults "\\C-x\\C-r" & "\\C-x\\C-w" 
+then you need to set environment variables \$RLWRAP_WRITEMACROS_KEY & \$RLWRAP_READMACROS_KEY to the key sequences.
 NOTE: be careful not to use keys that may be intercepted by the terminal driver or other filters, 
 e.g. "\\C-s" which freezes the terminal.
 
