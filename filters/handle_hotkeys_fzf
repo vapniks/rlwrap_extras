@@ -170,8 +170,8 @@ sub show_keys {
     }
     close INPUTRC;
   }
-  my $hkfile = ($ENV{TMP} || $ENV{TEMP} || "/tmp") . "/rlwrap_hotkeys.txt";
-  my $xkfile = ($ENV{TMP} || $ENV{TEMP} || "/tmp") . "/extrakeys.${comm}.txt";
+  my $hkfile = ($ENV{TMP} || $ENV{TEMP} || "/tmp") . "/rlwrap_hotkeys_${<}.txt";
+  my $xkfile = ($ENV{TMP} || $ENV{TEMP} || "/tmp") . "/extrakeys_${comm}_${<}.txt";
   write_file($hkfile, document_all_hotkeys());
   write_file($xkfile, $extrakeys);
   system("cat $hkfile $xkfile $includes | less"); 
