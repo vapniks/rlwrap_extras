@@ -341,7 +341,7 @@ sub findmacro {
       return ${$expansions{$saved_macros}}{$macro} = $expansion;
     }
   } else {
-    foreach (@macro_files) {
+    foreach (reverse(@macro_files)) {
       my $val = ${$expansions{$_}}{$macro};
       if ($val) {
 	if ($args) {
@@ -384,7 +384,7 @@ sub complete_macro {
     my $query = length($+{m}) > 0 ? "--query '^$+{m}'" : "";
     my @items;
     my %seen;
-    foreach (@macro_files) {
+    foreach (reverse(@macro_files)) {
       my $file = $_;
       foreach (keys %{$expansions{$file}}) {
 	my $name = $_;
