@@ -170,7 +170,7 @@ sub expand_and_record_macros {
     $expanded =~ ${rx_pipesplit}; # this captures $+{i}, $+{pl}, $+{plc}, $+{ps}, $+{psm} & $+{psc}
     ($input, $pipeline, $pipesink) = ($+{i},$+{pl},$+{ps});
     # keep expanding $input & $pipeline until there are no more macros to be expanded
-    #debug_info('expand_and_record_macros',"input = \"${input}\"${nl}",1,1);
+    #debug_info('expand_and_record_macros',"expanded = \"${expanded}\"${nl}input = \"${input}\"${nl}",1,1);
     while ($input =~ s/${rx_macro}/findmacro($+{m})/ge
 	   || $pipeline =~ s/${rx_macro}/findmacro($+{m})/ge) {
       # need to join & resplit in case the location of the 1st pipesink changed after expansion:
