@@ -8,3 +8,4 @@ awkrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "awk {q}"
 sedrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "sed -n {q}"
 opensslrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "openssl x509 -noout {q}" -q " -text"
 visidatacsv $PCHAR vd -f csv
+countlines $PCHAR wc -l

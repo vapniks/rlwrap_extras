@@ -217,7 +217,7 @@ sub prompt {
     # delete $wait_text which was added by the output_handler (see above)
     $filter->send_output_oob("\x08" x length($wait_text) . "\n");
     my $output = $filter->cumulative_output;
-    #debug_info('prompt',"cumulative_output: $output",1,1);
+    #debug_info('prompt',"cumulative_output: \"${output}\"",1,1);
     process_pipeline($output,$prompt,1);
     undef $pipeline;
     undef $pipesink;
@@ -274,7 +274,7 @@ sub process_pipeline {
       #debug_info('process_pipeline',"plc = $+{plc}, output = \"${output}\"");
       local $SIG{PIPE} =  'IGNORE'; # we don't want to die if the pipeline quits
       open PIPELINE, "| $+{plc}"; # don't replace this with $pipeline, since the $pipechar might not be |
-      #debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = ${output}");
+      #debug_info('process_pipeline',"C (no pipesink): depth = $depth",1,0,"output = \"${output}\"");
       print PIPELINE $output;
       close PIPELINE; # this waits until pipeline has finished
     }
