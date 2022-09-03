@@ -597,6 +597,8 @@ You could store this whole pipeline, or part of it, in another macro.
 Notes: 
  - You may need to redirect STDOUT to STDERR using ">&2" to get some shell commands such as "less" to work in 
    pipelines that pipe their output to a REPL command. 
+ - If you have trouble piping output from the REPL to the SHELL try using the rlwrap -O option to ensure it doesn't 
+   mistake REPL output for a shell prompt.
  - If you use fzf in a pipeline set "--height=100%" in the options to avoid messing up the prompt when it returns.
 EOF
 }
