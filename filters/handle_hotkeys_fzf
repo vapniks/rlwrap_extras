@@ -185,7 +185,7 @@ sub fzf_history {
   my $histfile = ($ENV{TMP} || $ENV{TEMP} || "/tmp") . "/history.${comm}.txt";
   $history ||= " "; #write_file crashes  if called on an empty string....
   write_file($histfile, $history);
-  my $select_1 = safe_backtick("cat $histfile | $fzf --select-1 --no-multi --query '$prefix'");
+  my $select_1 = safe_backtick("tac $histfile | $fzf --select-1 --no-multi --query '$prefix'");
   chomp($select_1);
   return ("", $select_1, $postfix, $history, $histpos);
 }

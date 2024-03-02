@@ -119,7 +119,7 @@ $filter -> prompt_handler(\&prompt);
 #$filter -> echo_handler(sub {$last_raw_input});   # but echo the raw (un-expanded) input
 # hash indicating which functions to print debug messages for:
 #my %debug = ('process_pipeline'=>1,'cloak_and_dagger2'=>1,'evalmacro'=>1,'expand_and_record_macros'=>1,'prompt'=>1,'output'=>1,'findmacro'=>1,'complete_macro'=>1,'expect2'=>1,'exp_internal'=>1);
-my %debug = ('cloak_and_dagger2'=>0,'expand_and_record_macros'=>0,'process_pipeline'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
+my %debug = ('cloak_and_dagger2'=>1,'expand_and_record_macros'=>0,'process_pipeline'=>0,'findmacro'=>0,'evalmacro'=>0); # 'cloak_and_dagger2' must be set (to 0 or 1) for the next line to work
 $filter -> cloak_and_dagger_verbose($debug{'cloak_and_dagger2'});
 $filter -> completion_handler(\&complete_macro);
 $filter -> hotkey_handler(\&hotkey_handler);
@@ -300,8 +300,10 @@ sub cloak_and_dagger2 {
   $exp->clear_accum();
   $question =~ s/^\s*//;
   $exp->send("${question}${nl}");
-  my ($pos,$err,$match,$before,$after) = $exp->expect(ceil($timeout),'-re',"^\Q${prompt}\E");
-  #debug_info('cloak_and_dagger2',"pos: ${pos}${nl}error: \"${err}\"${nl}match: \"${match}\"${nl}before: \"${before}\"${nl}after: \"${after}\"");
+  my ($pos,$err,$match,$before,$after) = $exp->expect(ceil($timeout),'-re',"\Q${prompt}\E");
+  # Remove echoed $question and trailing whitespace & newline 
+  $before =~ s/^\Q${question}\E\s*(.*[^\s])\s*/$1/;
+  #debug_info('cloak_and_dagger2',"pos: \"${pos}\"${nl}error: \"${err}\"${nl}match: \"${match}\"${nl}before: \"${before}\"${nl}after: \"${after}\"");
   $exp->clear_accum();
   $leftover_text = $after;
   return $before;
@@ -310,7 +312,8 @@ sub cloak_and_dagger2 {
 # simple-call-tree-info: CHECK  
 sub evalmacro {
   my ($val) = @_;
-  my $prompt = $last_prompt . "\s*";
+  my $prompt = $last_prompt;
+  #my $prompt = $last_prompt . "\\s*";  
   $val =~ s/^\s*//;
   #debug_info('evalmacro',"val: $val");
   # alter the pipeline so that it stores its output in $tempmacro,
@@ -331,7 +334,7 @@ sub findmacro {
   my ($eval, $args);
   $macro =~ /(?'e'<)?(?'m'\w+)(\[\[(?'a'.*?)\]\])?/;
   ($eval, $macro, $args) = ($+{e}, $+{m}, $+{a});
-  #debug_info('findmacro',"macro: $macro\neval: $eval\nargs: $args\nexpansion: $expansion");
+  #debug_info('findmacro',"macro: \"${macro}\"${nl}eval: \"${eval}\"${nl}args: \"${args}\"${nl}expansion: \"${expansion}\"");
   if ($expansion) {
     if ($expansion eq " ") {
       foreach (@macro_files) {
@@ -352,7 +355,7 @@ sub findmacro {
 	    $i += 1;
 	  }
 	}
-	#debug_info('findmacro',"val: $val");
+	#debug_info('findmacro',"val: \"${val}\"");
 	return $eval ? evalmacro($val) : $val;
       }
     }

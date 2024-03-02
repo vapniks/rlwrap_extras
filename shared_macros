@@ -3,7 +3,7 @@ feedgnuplot $PCHAR feedgnuplot --terminal "dumb $${COLUMNS},$${LINES}" --exit
 greprepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "grep {q}"
 xmlstarletrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "xmlstarlet {q}"
 jqrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "jq {q}" -q " -C ."
-mlrrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -n ${LINES} -o o -c "mlr {q} {s}" -q "cat"
+mlrrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -n ${LINES} -o o -c "mlr {q}" -q "cat"
 awkrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "awk {q}"
 sedrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "sed -n {q}"
 opensslrepl $PCHAR ${SHELL_SCRIPTS_DIRECTORY}/fzfrepl -o o -c "openssl x509 -noout {q}" -q " -text"
