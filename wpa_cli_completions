@@ -33,6 +33,7 @@ blacklist
 log_level
 log_level
 list_networks
+list_sta
 select_network
 enable_network
 disable_network
